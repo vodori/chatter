@@ -228,8 +228,8 @@ function broadcast(settings: BrokerSettings, message: MessagePacket) {
         });
     }
 
-    if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
-        chrome.runtime.sendMessage(message);
+    if (chrome && chrome.runtime && chrome.runtime.id && chrome.runtime.sendMessage) {
+        chrome.runtime.sendMessage(chrome.runtime.id, message);
     }
 
     if (chrome && chrome.tabs && chrome.tabs.query) {
