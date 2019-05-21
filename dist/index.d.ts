@@ -72,8 +72,7 @@ export interface MessageBroker {
     handleSubscriptions<T, S>(kind: MessageKey, handler: (msg: T) => Observable<S>): void;
 }
 export declare type Predicate<T> = (x: T) => boolean;
-interface BrokerSettings {
+export interface BrokerSettings {
     originVerifier: Predicate<string>;
 }
 export declare function createGossipNode(location: MessageLocation, settings?: BrokerSettings): MessageBroker;
-export {};

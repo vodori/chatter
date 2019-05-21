@@ -99,7 +99,7 @@ interface BrokerState {
 
 export type Predicate<T> = (x: T) => boolean;
 
-interface BrokerSettings {
+export interface BrokerSettings {
     originVerifier: Predicate<string>;
 }
 
