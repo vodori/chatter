@@ -26,6 +26,18 @@ function emptyBrokerState(location) {
         subscriptionListeners: {},
     };
 }
+function extractHostname(url) {
+    let hostname;
+    if (url.indexOf("//") > -1) {
+        hostname = url.split('/')[2];
+    }
+    else {
+        hostname = url.split('/')[0];
+    }
+    hostname = hostname.split(':')[0];
+    hostname = hostname.split('?')[0];
+    return hostname;
+}
 function simpleHash(text) {
     let hash = 0;
     if (text.length === 0)
@@ -91,7 +103,7 @@ function quacksLikeAGossipPacket(message) {
 function getIframes() {
     return Array.from(document.getElementsByTagName('iframe'));
 }
-function broadcast(message) {
+function broadcast(settings, message) {
     if (window && window.parent && window.parent !== window) {
         window.parent.postMessage(message, "*");
     }
@@ -99,14 +111,20 @@ function broadcast(message) {
         if (window && window.addEventListener) {
             window.addEventListener("DOMContentLoaded", () => {
                 getIframes().forEach(frame => {
-                    frame.contentWindow.postMessage(message, "*");
+                    const targetOrigin = frame.src;
+                    if (settings.originVerifier(extractHostname(targetOrigin))) {
+                        frame.contentWindow.postMessage(message, "*");
+                    }
                 });
             });
         }
     }
     else {
         getIframes().forEach(frame => {
-            frame.contentWindow.postMessage(message, "*");
+            const targetOrigin = frame.src;
+            if (settings.originVerifier(extractHostname(targetOrigin))) {
+                frame.contentWindow.postMessage(message, "*");
+            }
         });
     }
     if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
@@ -131,7 +149,7 @@ function createGossipNode(location, settings = defaultSettings()) {
     };
     const send = (msg) => {
         state.seen.add(computeMessageHash(msg));
-        broadcast(msg);
+        broadcast(settings, msg);
     };
     const receive = (message) => {
         if (quacksLikeAGossipPacket(message)) {
@@ -210,15 +228,14 @@ function createGossipNode(location, settings = defaultSettings()) {
     };
     if (window && window.addEventListener) {
         window.addEventListener("message", event => {
-            if (settings.originVerifier(event.origin)) {
+            if (settings.originVerifier(extractHostname(event.origin))) {
                 receive(event.data);
             }
         });
     }
     if (chrome && chrome.runtime && chrome.runtime.onMessage) {
         chrome.runtime.onMessage.addListener((message, sender) => {
-            const origin = `chrome-extension://${sender.id}`;
-            if (settings.originVerifier(origin)) {
+            if (settings.originVerifier(extractHostname(sender.id))) {
                 receive(message);
             }
         });

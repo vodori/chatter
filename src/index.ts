@@ -122,6 +122,18 @@ function emptyBrokerState(location: MessageLocation): BrokerState {
     }
 }
 
+function extractHostname(url) {
+    let hostname;
+    if (url.indexOf("//") > -1) {
+        hostname = url.split('/')[2];
+    } else {
+        hostname = url.split('/')[0];
+    }
+    hostname = hostname.split(':')[0];
+    hostname = hostname.split('?')[0];
+    return hostname;
+}
+
 function simpleHash(text: string): number {
     let hash = 0;
     if (text.length === 0) return hash;
@@ -190,7 +202,7 @@ function getIframes(): HTMLIFrameElement[] {
     return Array.from(document.getElementsByTagName('iframe'));
 }
 
-function broadcast(message: MessagePacket) {
+function broadcast(settings: BrokerSettings, message: MessagePacket) {
 
     if (window && window.parent && window.parent !== window) {
         window.parent.postMessage(message, "*");
@@ -200,13 +212,19 @@ function broadcast(message: MessagePacket) {
         if (window && window.addEventListener) {
             window.addEventListener("DOMContentLoaded", () => {
                 getIframes().forEach(frame => {
-                    frame.contentWindow.postMessage(message, "*");
+                    const targetOrigin = frame.src;
+                    if (settings.originVerifier(extractHostname(targetOrigin))) {
+                        frame.contentWindow.postMessage(message, "*");
+                    }
                 });
             });
         }
     } else {
         getIframes().forEach(frame => {
-            frame.contentWindow.postMessage(message, "*");
+            const targetOrigin = frame.src;
+            if (settings.originVerifier(extractHostname(targetOrigin))) {
+                frame.contentWindow.postMessage(message, "*");
+            }
         });
     }
 
@@ -237,7 +255,7 @@ export function createGossipNode(location: MessageLocation, settings: BrokerSett
 
     const send = (msg: MessagePacket): void => {
         state.seen.add(computeMessageHash(msg));
-        broadcast(msg);
+        broadcast(settings, msg);
     };
 
     const receive = (message: any) => {
@@ -322,7 +340,7 @@ export function createGossipNode(location: MessageLocation, settings: BrokerSett
 
     if (window && window.addEventListener) {
         window.addEventListener("message", event => {
-            if (settings.originVerifier(event.origin)) {
+            if (settings.originVerifier(extractHostname(event.origin))) {
                 receive(event.data);
             }
         });
@@ -330,8 +348,7 @@ export function createGossipNode(location: MessageLocation, settings: BrokerSett
 
     if (chrome && chrome.runtime && chrome.runtime.onMessage) {
         chrome.runtime.onMessage.addListener((message, sender) => {
-            const origin = `chrome-extension://${sender.id}`;
-            if (settings.originVerifier(origin)) {
+            if (settings.originVerifier(extractHostname(sender.id))) {
                 receive(message);
             }
         });
