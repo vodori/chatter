@@ -5,7 +5,7 @@
     "declaration": true,
     "outDir": "./dist",
     "noEmitOnError": true,
-    "noImplicitAny": true,
+    "noImplicitAny": false,
     "typeRoots": [ "node_modules/@types" ]
   },
   "include": [

@@ -245,6 +245,8 @@ export function createGossipNode(location: MessageLocation, settings: BrokerSett
             const packet = <MessagePacket>message;
             const hash = computeMessageHash(message);
             if (!state.seen.has(hash)) {
+                state.seen.add(hash);
+
                 if (packet.target === state.location) {
                     if (state.pendingRequests[packet.id]) {
                         const subject = state.pendingRequests[packet.id];

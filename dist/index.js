@@ -138,6 +138,7 @@ function createGossipNode(location, settings = defaultSettings()) {
             const packet = message;
             const hash = computeMessageHash(message);
             if (!state.seen.has(hash)) {
+                state.seen.add(hash);
                 if (packet.target === state.location) {
                     if (state.pendingRequests[packet.id]) {
                         const subject = state.pendingRequests[packet.id];
