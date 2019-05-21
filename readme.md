@@ -50,7 +50,7 @@ broker.subscribe("MY_IFRAME", "serverPings", {url: "https://example.com/healthz"
     console.log(`The status code of example.com/healthz is ${response}`);
 });
 
-broker.handlePushes("SAY_HELLO", response => {
+broker.handlePushes("SAY_HELLO", message => {
     console.log("Someone said hello to the background script!");
 });
 ```
