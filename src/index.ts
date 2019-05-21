@@ -97,13 +97,15 @@ interface BrokerState {
 
 }
 
+export type Predicate<T> = (x: T) => boolean;
+
 interface BrokerSettings {
-    trustedOrigins: Set<string>;
+    originVerifier: Predicate<string>;
 }
 
 function defaultSettings(): BrokerSettings {
     return {
-        trustedOrigins: new Set(["*"])
+        originVerifier: x => true
     }
 }
 
@@ -132,13 +134,7 @@ function simpleHash(text: string): number {
 }
 
 function computeMessageHash(message: MessagePacket): number {
-    const identity = {
-        id: message.id,
-        protocol: message.protocol,
-        source: message.source,
-        target: message.target
-    };
-    return simpleHash(JSON.stringify(identity));
+    return simpleHash(JSON.stringify(message));
 }
 
 function isObject(o: any) {
@@ -324,13 +320,18 @@ export function createGossipNode(location: MessageLocation, settings: BrokerSett
 
     if (window && window.addEventListener) {
         window.addEventListener("message", event => {
-            receive(event.data);
+            if (settings.originVerifier(event.origin)) {
+                receive(event.data);
+            }
         });
     }
 
     if (chrome && chrome.runtime && chrome.runtime.onMessage) {
         chrome.runtime.onMessage.addListener((message, sender) => {
-            receive(message);
+            const origin = `chrome-extension://${sender.id}`;
+            if (settings.originVerifier(origin)) {
+                receive(message);
+            }
         });
     }
 
@@ -344,7 +345,7 @@ export function createGossipNode(location: MessageLocation, settings: BrokerSett
         handleSubscriptions<T, S>(kind: string, handler: (msg: T) => Observable<S>): void {
             state.subscriptionListeners[kind] = handler;
         },
-        push<T>(dest: string, kind: string, message: T): void {
+        push<T>(dest: string, kind: string, message?: T): void {
             const transaction = uuid();
 
             send({
@@ -357,7 +358,7 @@ export function createGossipNode(location: MessageLocation, settings: BrokerSett
             });
 
         },
-        request<T, S>(dest: string, kind: string, message: T): Observable<S> {
+        request<T, S>(dest: string, kind: string, message?: T): Observable<S> {
             const transaction = uuid();
 
             const subject = new Subject<MessagePacket>();
@@ -377,7 +378,7 @@ export function createGossipNode(location: MessageLocation, settings: BrokerSett
                 return message.data;
             }));
         },
-        subscribe<T, S>(dest: string, kind: string, message: T): Observable<S> {
+        subscribe<T, S>(dest: string, kind: string, message?: T): Observable<S> {
             const transaction = uuid();
 
             const subject = new Subject<MessagePacket>();
