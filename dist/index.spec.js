@@ -37,12 +37,12 @@ test('only ever receive a single response', done => {
     });
     setTimeout(() => {
         sub.unsubscribe();
-    }, 500);
+    }, 50);
     setTimeout(() => {
         expect(sent).toEqual([2]);
         expect(sent).toEqual(received);
         done();
-    }, 1000);
+    }, 100);
 });
 test('producers stop when subscriptions are unsubscribed', done => {
     const b7 = index_1.createGossipNode("node7");
@@ -50,18 +50,18 @@ test('producers stop when subscriptions are unsubscribed', done => {
     const sent = [];
     const received = [];
     b7.handleSubscriptions("m1", msg => {
-        return rxjs_1.interval(100).pipe(operators_1.tap(msg => sent.push(msg)));
+        return rxjs_1.interval(10).pipe(operators_1.tap(msg => sent.push(msg)));
     });
     const sub = b8.subscription("node7", "m1", 1).subscribe(response => {
         received.push(response);
     });
     setTimeout(() => {
         sub.unsubscribe();
-    }, 500);
+    }, 50);
     setTimeout(() => {
         expect(sent).toEqual(received);
         expect(sent.length).toBeLessThan(6);
         expect(received.length).toBeLessThan(6);
         done();
-    }, 1000);
+    }, 100);
 });

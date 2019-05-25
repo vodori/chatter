@@ -22,7 +22,8 @@ export interface MessagePacket {
     data: MessagePayload;
 }
 export interface BrokerSettings {
-    originVerifier: Predicate<string>;
+    verbose?: boolean;
+    originVerifier?: Predicate<string>;
 }
 export interface MessageBroker {
     /**

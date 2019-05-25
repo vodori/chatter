@@ -16,6 +16,7 @@ const _document = _global.document;
 const _localMessageBus = new rxjs_1.Subject();
 function defaultSettings() {
     return {
+        verbose: false,
         originVerifier: _ => true
     };
 }
@@ -64,15 +65,6 @@ function isObject(o) {
         return false;
     return o.constructor == Object;
 }
-function intersection(s1, s2) {
-    const inter = new Set();
-    s1.forEach(v => {
-        if (s2.has(v)) {
-            inter.add(v);
-        }
-    });
-    return inter;
-}
 function uuid() {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
         const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
@@ -83,9 +75,8 @@ function quacksLikeAGossipPacket(message) {
     if (!isObject(message)) {
         return false;
     }
-    const keys = new Set(Object.keys(message || {}));
-    const expected = new Set(["id", "protocol", "source", "target", "key", "data"]);
-    return intersection(keys, expected).size === expected.size;
+    const keys = ["id", "protocol", "source", "target", "key", "data"];
+    return keys.every(key => message.hasOwnProperty(key));
 }
 function getIframes() {
     return Array.from(_document.getElementsByTagName('iframe'));
@@ -98,7 +89,7 @@ function broadcast(settings, message) {
         if (!_localMessageBus.closed) {
             _localMessageBus.next(message);
         }
-        else {
+        else if (settings.verbose) {
             console.warn("Tried to send request to closed local message bus", message);
         }
     }
@@ -133,8 +124,9 @@ function broadcast(settings, message) {
         });
     }
 }
-function createGossipNode(location, settings = defaultSettings()) {
+function createGossipNode(location, settings = {}) {
     const state = emptyBrokerState(location);
+    settings = Object.assign(defaultSettings(), settings);
     state.pushListeners[exports.ChatterUnsubscribeMessageKey] = (msg) => {
         if (msg.subscriptionId) {
             const subject = state.openProducers[msg.subscriptionId];
@@ -162,7 +154,7 @@ function createGossipNode(location, settings = defaultSettings()) {
                             if (!subject.closed) {
                                 subject.next(packet);
                             }
-                            else {
+                            else if (settings.verbose) {
                                 console.warn("Tried to send message to closed request", packet);
                             }
                             return;
@@ -174,7 +166,7 @@ function createGossipNode(location, settings = defaultSettings()) {
                             if (!subject.closed) {
                                 subject.next(packet);
                             }
-                            else {
+                            else if (settings.verbose) {
                                 console.warn("Tried to send message to closed subscription", packet);
                             }
                             return;
