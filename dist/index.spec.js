@@ -52,7 +52,7 @@ test('producers stop when subscriptions are unsubscribed', done => {
     b7.handleSubscriptions("m1", msg => {
         return rxjs_1.interval(100).pipe(operators_1.tap(msg => sent.push(msg)));
     });
-    const sub = b8.subscribe("node7", "m1", 1).subscribe(response => {
+    const sub = b8.subscription("node7", "m1", 1).subscribe(response => {
         received.push(response);
     });
     setTimeout(() => {

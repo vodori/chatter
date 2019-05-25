@@ -73,24 +73,6 @@ function intersection(s1, s2) {
     });
     return inter;
 }
-function onUnsubscribe(obs, f) {
-    return new rxjs_1.Observable(observer => {
-        const sub = obs.subscribe(message => {
-            observer.next(message);
-        }, error => {
-            observer.error(error);
-        });
-        return () => {
-            try {
-                sub.unsubscribe();
-            }
-            finally {
-                f();
-            }
-        };
-    });
-}
-;
 function uuid() {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
         const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
@@ -316,7 +298,7 @@ function createGossipNode(location, settings = defaultSettings()) {
                 };
             });
         },
-        subscribe(dest, kind, message = {}) {
+        subscription(dest, kind, message = {}) {
             return new rxjs_1.Observable(observer => {
                 const transaction = uuid();
                 const subject = new rxjs_1.Subject();

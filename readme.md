@@ -29,7 +29,7 @@ ___
 ### Usage
 
 
-The way you communicate stays the same regardless of the context you're in. Just name your location
+The way you communicate stays the same regardless of the context you're in. Just name each location
 and start sending and/or handling messages. As an example:
 
 
@@ -46,7 +46,7 @@ broker.request("CONTENT_SCRIPT", "domNodeCount", {}).subscribe(response => {
     console.log(`The dom currently has ${response} nodes.`);
 });
 
-broker.subscribe("MY_IFRAME", "serverPings", {url: "https://example.com/healthz"}).subscribe(response => {
+broker.subscription("MY_IFRAME", "serverPings", {url: "https://example.com/healthz"}).subscribe(response => {
     console.log(`The status code of example.com/healthz is ${response}`);
 });
 
@@ -90,6 +90,56 @@ broker.push("BACKGROUND_SCRIPT", "SAY_HELLO");
 
 ```
 
+___
+
+
+### Security
+
+Note that there are security concerns when sending messages between contexts in the browser. You don't
+want code listening in an untrusted frame to intercept traffic only intended for your application.
+You should define an originVerifier at each node to constrain the inbound and outbound messages.
+
+``` 
+function gossipSettings(): BrokerSettings {
+    return {
+        originVerifier: origin => {
+            const verifiers: RegExp[] = [];
+            if (chrome && chrome.runtime && chrome.runtime.id) {
+                verifiers.push(exactMatch(chrome.runtime.id));
+            }
+            verifiers.push(/^example.com$/);
+            return verifiers.some(verifier => verifier.test(origin));
+        }
+    }
+}
+
+// now this node will only accept/send messages from example.com or other
+// components of the same chrome extension
+const backgroundNode = createGossipNode("BACKGROUND", gossipSettings());
+
+```
+
+___
+
+### FAQ
+
+_Q:_ 
+
+Do I have to be building a chrome extension to use this?
+
+_A:_ 
+
+No. It's useful when you're dealing with iframes too.
+
+_Q:_ 
+
+Do I have to have iframes to use this?
+
+_A:_ 
+
+No. You can create two nodes in the same frame if you want.
+
+___
 
 ### License
 

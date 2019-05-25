@@ -78,7 +78,7 @@ export interface MessageBroker {
      * @param kind - The type of message
      * @param message - The message data
      */
-    subscribe(dest: MessageLocation, kind: MessageKey, message?: MessagePayload): Observable<MessagePayload>;
+    subscription(dest: MessageLocation, kind: MessageKey, message?: MessagePayload): Observable<MessagePayload>;
 
     /**
      * Setup a handler that will be invoked every time this location receives
@@ -422,7 +422,7 @@ export function createGossipNode(location: MessageLocation, settings: BrokerSett
                 }
             });
         },
-        subscribe(dest: MessageLocation, kind: MessageKey, message: MessagePayload = {}): Observable<MessagePayload> {
+        subscription(dest: MessageLocation, kind: MessageKey, message: MessagePayload = {}): Observable<MessagePayload> {
             return new Observable(observer => {
 
                 const transaction = uuid();
