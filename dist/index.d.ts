@@ -6,10 +6,12 @@ export declare enum MessageProtocol {
 }
 export declare type MessageID = string;
 export declare type MessageKey = string;
+export declare type MessagePayload = any;
 export declare type MessageLocation = string;
 export declare type MessageConsumer = (msg: any) => void;
 export declare type MessageResponder = (msg: any) => Observable<any>;
 export declare type MessagePublisher = (msg: any) => Observable<any>;
+export declare type Predicate<T> = (x: T) => boolean;
 export declare const ChatterUnsubscribeMessageKey = "_ChatterUnsubscribe";
 export interface MessagePacket {
     id: MessageID;
@@ -17,7 +19,10 @@ export interface MessagePacket {
     target: MessageLocation;
     protocol: MessageProtocol;
     key: MessageKey;
-    data: any;
+    data: MessagePayload;
+}
+export interface BrokerSettings {
+    originVerifier: Predicate<string>;
 }
 export interface MessageBroker {
     /**
@@ -27,7 +32,7 @@ export interface MessageBroker {
      * @param kind - The type of message
      * @param message - The message data
      */
-    push<T>(dest: MessageLocation, kind: MessageKey, message: T): void;
+    push(dest: MessageLocation, kind: MessageKey, message?: MessagePayload): void;
     /**
      * Send a request message to the specified location and get an observable
      * that will emit the response.
@@ -36,7 +41,7 @@ export interface MessageBroker {
      * @param kind - The type of message
      * @param message - The message data
      */
-    request<T, S>(dest: MessageLocation, kind: MessageKey, message: T): Observable<S>;
+    request(dest: MessageLocation, kind: MessageKey, message?: MessagePayload): Observable<MessagePayload>;
     /**
      * Send a request message to the specified location and get an observable
      * that will emit each message produced..
@@ -45,7 +50,7 @@ export interface MessageBroker {
      * @param kind - The type of message
      * @param message - The message data
      */
-    subscribe<T, S>(dest: MessageLocation, kind: MessageKey, message: T): Observable<S>;
+    subscribe(dest: MessageLocation, kind: MessageKey, message?: MessagePayload): Observable<MessagePayload>;
     /**
      * Setup a handler that will be invoked every time this location receives
      * a push message.
@@ -53,7 +58,7 @@ export interface MessageBroker {
      * @param kind - The type of message
      * @param handler - The callback function
      */
-    handlePushes<T>(kind: MessageKey, handler: (msg: T) => void): void;
+    handlePushes(kind: MessageKey, handler: MessageConsumer): void;
     /**
      * Setup a  handler that will be invoked to produce a response every time this location
      * receives a request message.
@@ -61,7 +66,7 @@ export interface MessageBroker {
      * @param kind - The type of message
      * @param handler - The callback function that eventually produces a response.
      */
-    handleRequests<T, S>(kind: MessageKey, handler: (msg: T) => Observable<S>): void;
+    handleRequests(kind: MessageKey, handler: MessageResponder): void;
     /**
      * Setup a  handler that will be invoked to produce one or more responses every
      * time this location receives a subscription message.
@@ -69,10 +74,6 @@ export interface MessageBroker {
      * @param kind - The type of message
      * @param handler - The callback function that may eventually produce responses.
      */
-    handleSubscriptions<T, S>(kind: MessageKey, handler: (msg: T) => Observable<S>): void;
-}
-export declare type Predicate<T> = (x: T) => boolean;
-export interface BrokerSettings {
-    originVerifier: Predicate<string>;
+    handleSubscriptions(kind: MessageKey, handler: MessagePublisher): void;
 }
 export declare function createGossipNode(location: MessageLocation, settings?: BrokerSettings): MessageBroker;

@@ -1,5 +1,5 @@
 import {Observable, Subject, Subscription} from "rxjs";
-import {first, map} from "rxjs/operators";
+import {first} from "rxjs/operators";
 
 export enum MessageProtocol {
     PUSH,
@@ -9,12 +9,20 @@ export enum MessageProtocol {
 
 export type MessageID = string;
 export type MessageKey = string;
+export type MessagePayload = any;
 export type MessageLocation = string;
 export type MessageConsumer = (msg: any) => void;
 export type MessageResponder = (msg: any) => Observable<any>;
 export type MessagePublisher = (msg: any) => Observable<any>;
+export type Predicate<T> = (x: T) => boolean;
 
 export const ChatterUnsubscribeMessageKey = "_ChatterUnsubscribe";
+
+const _global = this;
+const _chrome = _global.chrome;
+const _window = _global.window;
+const _document = _global.document;
+const _localMessageBus = new Subject<MessagePacket>();
 
 export interface MessagePacket {
     id: MessageID;
@@ -22,68 +30,8 @@ export interface MessagePacket {
     target: MessageLocation;
     protocol: MessageProtocol;
     key: MessageKey;
-    data: any;
+    data: MessagePayload;
 }
-
-export interface MessageBroker {
-
-    /**
-     * Send a one-way message to the specified location.
-     *
-     * @param dest - The destination
-     * @param kind - The type of message
-     * @param message - The message data
-     */
-    push<T>(dest: MessageLocation, kind: MessageKey, message: T): void;
-
-    /**
-     * Send a request message to the specified location and get an observable
-     * that will emit the response.
-     *
-     * @param dest - The destination
-     * @param kind - The type of message
-     * @param message - The message data
-     */
-    request<T, S>(dest: MessageLocation, kind: MessageKey, message: T): Observable<S>;
-
-    /**
-     * Send a request message to the specified location and get an observable
-     * that will emit each message produced..
-     *
-     * @param dest - The destination
-     * @param kind - The type of message
-     * @param message - The message data
-     */
-    subscribe<T, S>(dest: MessageLocation, kind: MessageKey, message: T): Observable<S>;
-
-    /**
-     * Setup a handler that will be invoked every time this location receives
-     * a push message.
-     *
-     * @param kind - The type of message
-     * @param handler - The callback function
-     */
-    handlePushes<T>(kind: MessageKey, handler: (msg: T) => void): void;
-
-    /**
-     * Setup a  handler that will be invoked to produce a response every time this location
-     * receives a request message.
-     *
-     * @param kind - The type of message
-     * @param handler - The callback function that eventually produces a response.
-     */
-    handleRequests<T, S>(kind: MessageKey, handler: (msg: T) => Observable<S>): void;
-
-    /**
-     * Setup a  handler that will be invoked to produce one or more responses every
-     * time this location receives a subscription message.
-     *
-     * @param kind - The type of message
-     * @param handler - The callback function that may eventually produce responses.
-     */
-    handleSubscriptions<T, S>(kind: MessageKey, handler: (msg: T) => Observable<S>): void;
-}
-
 
 interface BrokerState {
     seen: Set<number>,
@@ -97,15 +45,73 @@ interface BrokerState {
 
 }
 
-export type Predicate<T> = (x: T) => boolean;
-
 export interface BrokerSettings {
     originVerifier: Predicate<string>;
 }
 
+export interface MessageBroker {
+
+    /**
+     * Send a one-way message to the specified location.
+     *
+     * @param dest - The destination
+     * @param kind - The type of message
+     * @param message - The message data
+     */
+    push(dest: MessageLocation, kind: MessageKey, message?: MessagePayload): void;
+
+    /**
+     * Send a request message to the specified location and get an observable
+     * that will emit the response.
+     *
+     * @param dest - The destination
+     * @param kind - The type of message
+     * @param message - The message data
+     */
+    request(dest: MessageLocation, kind: MessageKey, message?: MessagePayload): Observable<MessagePayload>;
+
+    /**
+     * Send a request message to the specified location and get an observable
+     * that will emit each message produced..
+     *
+     * @param dest - The destination
+     * @param kind - The type of message
+     * @param message - The message data
+     */
+    subscribe(dest: MessageLocation, kind: MessageKey, message?: MessagePayload): Observable<MessagePayload>;
+
+    /**
+     * Setup a handler that will be invoked every time this location receives
+     * a push message.
+     *
+     * @param kind - The type of message
+     * @param handler - The callback function
+     */
+    handlePushes(kind: MessageKey, handler: MessageConsumer): void;
+
+    /**
+     * Setup a  handler that will be invoked to produce a response every time this location
+     * receives a request message.
+     *
+     * @param kind - The type of message
+     * @param handler - The callback function that eventually produces a response.
+     */
+    handleRequests(kind: MessageKey, handler: MessageResponder): void;
+
+    /**
+     * Setup a  handler that will be invoked to produce one or more responses every
+     * time this location receives a subscription message.
+     *
+     * @param kind - The type of message
+     * @param handler - The callback function that may eventually produce responses.
+     */
+    handleSubscriptions(kind: MessageKey, handler: MessagePublisher): void;
+}
+
+
 function defaultSettings(): BrokerSettings {
     return {
-        originVerifier: x => true
+        originVerifier: _ => true
     }
 }
 
@@ -165,23 +171,6 @@ function intersection<T>(s1: Set<T>, s2: Set<T>) {
     return inter;
 }
 
-function onUnsubscribe<T>(obs: Observable<T>, f: () => void): Observable<T> {
-    return new Observable(observer => {
-        const sub = obs.subscribe(message => {
-            observer.next(message);
-        }, error => {
-            observer.error(error);
-        });
-        return () => {
-            try {
-                sub.unsubscribe();
-            } finally {
-                f();
-            }
-        };
-    });
-};
-
 function uuid() {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
         const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
@@ -199,22 +188,30 @@ function quacksLikeAGossipPacket(message: any): boolean {
 }
 
 function getIframes(): HTMLIFrameElement[] {
-    return Array.from(document.getElementsByTagName('iframe'));
+    return Array.from(_document.getElementsByTagName('iframe'));
 }
 
 function broadcast(settings: BrokerSettings, message: MessagePacket) {
 
-    if (window && window.parent && window.parent !== window) {
-        window.parent.postMessage(message, "*");
+    if (_window && _window.parent && _window.parent !== _window) {
+        _window.parent.postMessage(message, '*');
     }
 
-    if (!document || document.readyState === 'loading') {
-        if (window && window.addEventListener) {
-            window.addEventListener("DOMContentLoaded", () => {
+    if (_localMessageBus) {
+        if (!_localMessageBus.closed) {
+            _localMessageBus.next(message);
+        } else {
+            console.warn("Tried to send request to closed local message bus", message);
+        }
+    }
+
+    if (!_document || _document.readyState === 'loading') {
+        if (_window && _window.addEventListener) {
+            _window.addEventListener('DOMContentLoaded', () => {
                 getIframes().forEach(frame => {
                     const targetOrigin = frame.src;
                     if (settings.originVerifier(extractHostname(targetOrigin))) {
-                        frame.contentWindow.postMessage(message, "*");
+                        frame.contentWindow.postMessage(message, '*');
                     }
                 });
             });
@@ -223,19 +220,19 @@ function broadcast(settings: BrokerSettings, message: MessagePacket) {
         getIframes().forEach(frame => {
             const targetOrigin = frame.src;
             if (settings.originVerifier(extractHostname(targetOrigin))) {
-                frame.contentWindow.postMessage(message, "*");
+                frame.contentWindow.postMessage(message, '*');
             }
         });
     }
 
-    if (chrome && chrome.runtime && chrome.runtime.id && chrome.runtime.sendMessage) {
-        chrome.runtime.sendMessage(chrome.runtime.id, message);
+    if (_chrome && _chrome.runtime && _chrome.runtime.id && _chrome.runtime.sendMessage) {
+        _chrome.runtime.sendMessage(_chrome.runtime.id, message);
     }
 
-    if (chrome && chrome.tabs && chrome.tabs.query) {
-        chrome.tabs.query({active: true, currentWindow: true}, function (tabs) {
-            if(tabs.length) {
-                chrome.tabs.sendMessage(tabs[0].id, message);
+    if (_chrome && _chrome.tabs && _chrome.tabs.query) {
+        _chrome.tabs.query({active: true, currentWindow: true}, tabs => {
+            if (tabs.length) {
+                _chrome.tabs.sendMessage(tabs[0].id, message);
             }
         });
     }
@@ -268,18 +265,30 @@ export function createGossipNode(location: MessageLocation, settings: BrokerSett
                 state.seen.add(hash);
 
                 if (packet.target === state.location) {
-                    if (state.pendingRequests[packet.id]) {
-                        const subject = state.pendingRequests[packet.id];
-                        delete state.pendingRequests[packet.id];
-                        subject.next(packet);
-                        subject.unsubscribe();
-                        return;
+
+                    if (packet.protocol === MessageProtocol.REQUEST_REPLY) {
+                        if (state.pendingRequests[packet.id]) {
+                            const subject = state.pendingRequests[packet.id];
+                            delete state.pendingRequests[packet.id];
+                            if (!subject.closed) {
+                                subject.next(packet);
+                            } else {
+                                console.warn("Tried to send message to closed request", packet);
+                            }
+                            return;
+                        }
                     }
 
-                    if (state.pendingSubscriptions[packet.id]) {
-                        const subject = state.pendingSubscriptions[packet.id];
-                        subject.next(packet);
-                        return;
+                    if (packet.protocol === MessageProtocol.TOPIC_SUBSCRIBE) {
+                        if (state.pendingSubscriptions[packet.id]) {
+                            const subject = state.pendingSubscriptions[packet.id];
+                            if (!subject.closed) {
+                                subject.next(packet);
+                            } else {
+                                console.warn("Tried to send message to closed subscription", packet);
+                            }
+                            return;
+                        }
                     }
 
                     if (packet.protocol === MessageProtocol.PUSH) {
@@ -297,6 +306,7 @@ export function createGossipNode(location: MessageLocation, settings: BrokerSett
                         if (handler) {
                             const responseObservable = handler(packet.data);
                             responseObservable.pipe(first()).subscribe(response => {
+
                                 send({
                                     id: packet.id,
                                     key: packet.key,
@@ -305,6 +315,7 @@ export function createGossipNode(location: MessageLocation, settings: BrokerSett
                                     target: packet.source,
                                     data: response
                                 });
+
                             });
                         } else {
                             console.warn("Received packet of unknown kind.", packet);
@@ -333,6 +344,7 @@ export function createGossipNode(location: MessageLocation, settings: BrokerSett
                     }
 
                 } else {
+                    // forward packet intended for another location
                     send(packet);
                 }
             }
@@ -340,16 +352,20 @@ export function createGossipNode(location: MessageLocation, settings: BrokerSett
 
     };
 
-    if (window && window.addEventListener) {
-        window.addEventListener("message", event => {
+    if (_localMessageBus) {
+        _localMessageBus.subscribe(receive);
+    }
+
+    if (_global.window && _window.addEventListener) {
+        _window.addEventListener("message", event => {
             if (settings.originVerifier(extractHostname(event.origin))) {
                 receive(event.data);
             }
         });
     }
 
-    if (chrome && chrome.runtime && chrome.runtime.onMessage) {
-        chrome.runtime.onMessage.addListener((message, sender) => {
+    if (_chrome && _chrome.runtime && _chrome.runtime.onMessage) {
+        _chrome.runtime.onMessage.addListener((message, sender) => {
             if (settings.originVerifier(extractHostname(sender.id))) {
                 receive(message);
             }
@@ -357,16 +373,16 @@ export function createGossipNode(location: MessageLocation, settings: BrokerSett
     }
 
     return {
-        handlePushes<T>(kind: string, handler: (msg: T) => void): void {
+        handlePushes(kind: MessageKey, handler: MessageConsumer): void {
             state.pushListeners[kind] = handler;
         },
-        handleRequests<T, S>(kind: string, handler: (msg: T) => Observable<S>): void {
+        handleRequests(kind: MessageKey, handler: MessageResponder): void {
             state.requestListeners[kind] = handler;
         },
-        handleSubscriptions<T, S>(kind: string, handler: (msg: T) => Observable<S>): void {
+        handleSubscriptions(kind: MessageKey, handler: MessagePublisher): void {
             state.subscriptionListeners[kind] = handler;
         },
-        push<T>(dest: string, kind: string, message?: T): void {
+        push<T>(dest: MessageLocation, kind: MessageKey, message: MessagePayload = {}): void {
             const transaction = uuid();
 
             send({
@@ -379,56 +395,69 @@ export function createGossipNode(location: MessageLocation, settings: BrokerSett
             });
 
         },
-        request<T, S>(dest: string, kind: string, message?: T): Observable<S> {
-            const transaction = uuid();
+        request(dest: MessageLocation, kind: MessageKey, message: MessagePayload = {}): Observable<MessagePayload> {
+            return new Observable(observer => {
 
-            const subject = new Subject<MessagePacket>();
+                const transaction = uuid();
+                const subject = new Subject<MessagePacket>();
+                state.pendingRequests[transaction] = subject;
 
-            state.pendingRequests[transaction] = subject;
+                const sub = subject.subscribe(result => {
+                    observer.next(result.data);
+                });
 
-            send({
-                id: transaction,
-                protocol: MessageProtocol.REQUEST_REPLY,
-                source: state.location,
-                target: dest,
-                key: kind,
-                data: message
-            });
-
-            return subject.pipe(first(), map(message => {
-                return message.data;
-            }));
-        },
-        subscribe<T, S>(dest: string, kind: string, message?: T): Observable<S> {
-            const transaction = uuid();
-
-            const subject = new Subject<MessagePacket>();
-
-            state.pendingSubscriptions[transaction] = subject;
-
-            send({
-                id: transaction,
-                protocol: MessageProtocol.TOPIC_SUBSCRIBE,
-                source: state.location,
-                target: dest,
-                key: kind,
-                data: message
-            });
-
-            const returnObservable = subject.pipe(map(message => {
-                return message.data;
-            }));
-
-            return onUnsubscribe(returnObservable, () => {
                 send({
-                    id: uuid(),
-                    protocol: MessageProtocol.PUSH,
+                    id: transaction,
+                    protocol: MessageProtocol.REQUEST_REPLY,
                     source: state.location,
                     target: dest,
-                    key: ChatterUnsubscribeMessageKey,
-                    data: {subscriptionId: transaction}
+                    key: kind,
+                    data: message
                 });
+
+                return () => {
+                    delete state.pendingRequests[transaction];
+                    sub.unsubscribe();
+                    subject.unsubscribe();
+                }
             });
+        },
+        subscribe(dest: MessageLocation, kind: MessageKey, message: MessagePayload = {}): Observable<MessagePayload> {
+            return new Observable(observer => {
+
+                const transaction = uuid();
+                const subject = new Subject<MessagePacket>();
+                state.pendingSubscriptions[transaction] = subject;
+
+                const sub = subject.subscribe(result => {
+                    observer.next(result.data);
+                });
+
+                send({
+                    id: transaction,
+                    protocol: MessageProtocol.TOPIC_SUBSCRIBE,
+                    source: state.location,
+                    target: dest,
+                    key: kind,
+                    data: message
+                });
+
+                return () => {
+                    send({
+                        id: uuid(),
+                        protocol: MessageProtocol.PUSH,
+                        source: state.location,
+                        target: dest,
+                        key: ChatterUnsubscribeMessageKey,
+                        data: {subscriptionId: transaction}
+                    });
+
+                    delete state.pendingSubscriptions[transaction];
+                    sub.unsubscribe();
+                    subject.unsubscribe();
+                };
+            });
+
         }
 
     }

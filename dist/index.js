@@ -9,9 +9,14 @@ var MessageProtocol;
     MessageProtocol[MessageProtocol["TOPIC_SUBSCRIBE"] = 2] = "TOPIC_SUBSCRIBE";
 })(MessageProtocol = exports.MessageProtocol || (exports.MessageProtocol = {}));
 exports.ChatterUnsubscribeMessageKey = "_ChatterUnsubscribe";
+const _global = this;
+const _chrome = _global.chrome;
+const _window = _global.window;
+const _document = _global.document;
+const _localMessageBus = new rxjs_1.Subject();
 function defaultSettings() {
     return {
-        originVerifier: x => true
+        originVerifier: _ => true
     };
 }
 function emptyBrokerState(location) {
@@ -101,19 +106,27 @@ function quacksLikeAGossipPacket(message) {
     return intersection(keys, expected).size === expected.size;
 }
 function getIframes() {
-    return Array.from(document.getElementsByTagName('iframe'));
+    return Array.from(_document.getElementsByTagName('iframe'));
 }
 function broadcast(settings, message) {
-    if (window && window.parent && window.parent !== window) {
-        window.parent.postMessage(message, "*");
+    if (_window && _window.parent && _window.parent !== _window) {
+        _window.parent.postMessage(message, '*');
     }
-    if (!document || document.readyState === 'loading') {
-        if (window && window.addEventListener) {
-            window.addEventListener("DOMContentLoaded", () => {
+    if (_localMessageBus) {
+        if (!_localMessageBus.closed) {
+            _localMessageBus.next(message);
+        }
+        else {
+            console.warn("Tried to send request to closed local message bus", message);
+        }
+    }
+    if (!_document || _document.readyState === 'loading') {
+        if (_window && _window.addEventListener) {
+            _window.addEventListener('DOMContentLoaded', () => {
                 getIframes().forEach(frame => {
                     const targetOrigin = frame.src;
                     if (settings.originVerifier(extractHostname(targetOrigin))) {
-                        frame.contentWindow.postMessage(message, "*");
+                        frame.contentWindow.postMessage(message, '*');
                     }
                 });
             });
@@ -123,16 +136,18 @@ function broadcast(settings, message) {
         getIframes().forEach(frame => {
             const targetOrigin = frame.src;
             if (settings.originVerifier(extractHostname(targetOrigin))) {
-                frame.contentWindow.postMessage(message, "*");
+                frame.contentWindow.postMessage(message, '*');
             }
         });
     }
-    if (chrome && chrome.runtime && chrome.runtime.sendMessage) {
-        chrome.runtime.sendMessage(message);
+    if (_chrome && _chrome.runtime && _chrome.runtime.id && _chrome.runtime.sendMessage) {
+        _chrome.runtime.sendMessage(_chrome.runtime.id, message);
     }
-    if (chrome && chrome.tabs && chrome.tabs.query) {
-        chrome.tabs.query({ active: true, currentWindow: true }, function (tabs) {
-            chrome.tabs.sendMessage(tabs[0].id, message);
+    if (_chrome && _chrome.tabs && _chrome.tabs.query) {
+        _chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
+            if (tabs.length) {
+                _chrome.tabs.sendMessage(tabs[0].id, message);
+            }
         });
     }
 }
@@ -158,17 +173,30 @@ function createGossipNode(location, settings = defaultSettings()) {
             if (!state.seen.has(hash)) {
                 state.seen.add(hash);
                 if (packet.target === state.location) {
-                    if (state.pendingRequests[packet.id]) {
-                        const subject = state.pendingRequests[packet.id];
-                        delete state.pendingRequests[packet.id];
-                        subject.next(packet);
-                        subject.unsubscribe();
-                        return;
+                    if (packet.protocol === MessageProtocol.REQUEST_REPLY) {
+                        if (state.pendingRequests[packet.id]) {
+                            const subject = state.pendingRequests[packet.id];
+                            delete state.pendingRequests[packet.id];
+                            if (!subject.closed) {
+                                subject.next(packet);
+                            }
+                            else {
+                                console.warn("Tried to send message to closed request", packet);
+                            }
+                            return;
+                        }
                     }
-                    if (state.pendingSubscriptions[packet.id]) {
-                        const subject = state.pendingSubscriptions[packet.id];
-                        subject.next(packet);
-                        return;
+                    if (packet.protocol === MessageProtocol.TOPIC_SUBSCRIBE) {
+                        if (state.pendingSubscriptions[packet.id]) {
+                            const subject = state.pendingSubscriptions[packet.id];
+                            if (!subject.closed) {
+                                subject.next(packet);
+                            }
+                            else {
+                                console.warn("Tried to send message to closed subscription", packet);
+                            }
+                            return;
+                        }
                     }
                     if (packet.protocol === MessageProtocol.PUSH) {
                         const handler = state.pushListeners[packet.key];
@@ -221,20 +249,24 @@ function createGossipNode(location, settings = defaultSettings()) {
                     }
                 }
                 else {
+                    // forward packet intended for another location
                     send(packet);
                 }
             }
         }
     };
-    if (window && window.addEventListener) {
-        window.addEventListener("message", event => {
+    if (_localMessageBus) {
+        _localMessageBus.subscribe(receive);
+    }
+    if (_global.window && _window.addEventListener) {
+        _window.addEventListener("message", event => {
             if (settings.originVerifier(extractHostname(event.origin))) {
                 receive(event.data);
             }
         });
     }
-    if (chrome && chrome.runtime && chrome.runtime.onMessage) {
-        chrome.runtime.onMessage.addListener((message, sender) => {
+    if (_chrome && _chrome.runtime && _chrome.runtime.onMessage) {
+        _chrome.runtime.onMessage.addListener((message, sender) => {
             if (settings.originVerifier(extractHostname(sender.id))) {
                 receive(message);
             }
@@ -250,7 +282,7 @@ function createGossipNode(location, settings = defaultSettings()) {
         handleSubscriptions(kind, handler) {
             state.subscriptionListeners[kind] = handler;
         },
-        push(dest, kind, message) {
+        push(dest, kind, message = {}) {
             const transaction = uuid();
             send({
                 id: transaction,
@@ -261,46 +293,58 @@ function createGossipNode(location, settings = defaultSettings()) {
                 data: message
             });
         },
-        request(dest, kind, message) {
-            const transaction = uuid();
-            const subject = new rxjs_1.Subject();
-            state.pendingRequests[transaction] = subject;
-            send({
-                id: transaction,
-                protocol: MessageProtocol.REQUEST_REPLY,
-                source: state.location,
-                target: dest,
-                key: kind,
-                data: message
-            });
-            return subject.pipe(operators_1.first(), operators_1.map(message => {
-                return message.data;
-            }));
-        },
-        subscribe(dest, kind, message) {
-            const transaction = uuid();
-            const subject = new rxjs_1.Subject();
-            state.pendingSubscriptions[transaction] = subject;
-            send({
-                id: transaction,
-                protocol: MessageProtocol.TOPIC_SUBSCRIBE,
-                source: state.location,
-                target: dest,
-                key: kind,
-                data: message
-            });
-            const returnObservable = subject.pipe(operators_1.map(message => {
-                return message.data;
-            }));
-            return onUnsubscribe(returnObservable, () => {
+        request(dest, kind, message = {}) {
+            return new rxjs_1.Observable(observer => {
+                const transaction = uuid();
+                const subject = new rxjs_1.Subject();
+                state.pendingRequests[transaction] = subject;
+                const sub = subject.subscribe(result => {
+                    observer.next(result.data);
+                });
                 send({
-                    id: uuid(),
-                    protocol: MessageProtocol.PUSH,
+                    id: transaction,
+                    protocol: MessageProtocol.REQUEST_REPLY,
                     source: state.location,
                     target: dest,
-                    key: exports.ChatterUnsubscribeMessageKey,
-                    data: { subscriptionId: transaction }
+                    key: kind,
+                    data: message
                 });
+                return () => {
+                    delete state.pendingRequests[transaction];
+                    sub.unsubscribe();
+                    subject.unsubscribe();
+                };
+            });
+        },
+        subscribe(dest, kind, message = {}) {
+            return new rxjs_1.Observable(observer => {
+                const transaction = uuid();
+                const subject = new rxjs_1.Subject();
+                state.pendingSubscriptions[transaction] = subject;
+                const sub = subject.subscribe(result => {
+                    observer.next(result.data);
+                });
+                send({
+                    id: transaction,
+                    protocol: MessageProtocol.TOPIC_SUBSCRIBE,
+                    source: state.location,
+                    target: dest,
+                    key: kind,
+                    data: message
+                });
+                return () => {
+                    send({
+                        id: uuid(),
+                        protocol: MessageProtocol.PUSH,
+                        source: state.location,
+                        target: dest,
+                        key: exports.ChatterUnsubscribeMessageKey,
+                        data: { subscriptionId: transaction }
+                    });
+                    delete state.pendingSubscriptions[transaction];
+                    sub.unsubscribe();
+                    subject.unsubscribe();
+                };
             });
         }
     };
