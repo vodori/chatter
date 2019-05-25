@@ -99,13 +99,15 @@ Note that there are security concerns when sending messages between contexts in 
 want code listening in an untrusted frame to intercept traffic only intended for your application.
 You should define an originVerifier at each node to constrain the inbound and outbound messages.
 
-``` 
+```typescript
+import {createGossipNode, BrokerSettings} from "chatter";
+
 function gossipSettings(): BrokerSettings {
     return {
         originVerifier: origin => {
             const verifiers: RegExp[] = [];
             if (chrome && chrome.runtime && chrome.runtime.id) {
-                verifiers.push(exactMatch(chrome.runtime.id));
+                verifiers.push(new RegExp(`^${chrome.runtime.id}$`));
             }
             verifiers.push(/^example.com$/);
             return verifiers.some(verifier => verifier.test(origin));
@@ -123,21 +125,11 @@ ___
 
 ### FAQ
 
-_Q:_ 
+__Q:__ Do I have to be building a chrome extension to use this?
+__A:__ No. It's useful when you're dealing with iframes too.
 
-Do I have to be building a chrome extension to use this?
-
-_A:_ 
-
-No. It's useful when you're dealing with iframes too.
-
-_Q:_ 
-
-Do I have to have iframes to use this?
-
-_A:_ 
-
-No. You can create two nodes in the same frame if you want.
+__Q:__ Do I have to have iframes to use this?
+__A:__ No. You can create two nodes in the same frame if you want.
 
 ___
 

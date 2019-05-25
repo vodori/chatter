@@ -46,7 +46,8 @@ interface BrokerState {
 }
 
 export interface BrokerSettings {
-    originVerifier: Predicate<string>;
+    verbose?: boolean;
+    originVerifier?: Predicate<string>;
 }
 
 export interface MessageBroker {
@@ -111,6 +112,7 @@ export interface MessageBroker {
 
 function defaultSettings(): BrokerSettings {
     return {
+        verbose: false,
         originVerifier: _ => true
     }
 }
@@ -161,16 +163,6 @@ function isObject(o: any) {
     return o.constructor == Object;
 }
 
-function intersection<T>(s1: Set<T>, s2: Set<T>) {
-    const inter = new Set();
-    s1.forEach(v => {
-        if (s2.has(v)) {
-            inter.add(v);
-        }
-    });
-    return inter;
-}
-
 function uuid() {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
         const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
@@ -182,9 +174,8 @@ function quacksLikeAGossipPacket(message: any): boolean {
     if (!isObject(message)) {
         return false;
     }
-    const keys = new Set(Object.keys(message || {}));
-    const expected = new Set(["id", "protocol", "source", "target", "key", "data"]);
-    return intersection(keys, expected).size === expected.size;
+    const keys = ["id", "protocol", "source", "target", "key", "data"];
+    return keys.every(key => message.hasOwnProperty(key));
 }
 
 function getIframes(): HTMLIFrameElement[] {
@@ -200,7 +191,7 @@ function broadcast(settings: BrokerSettings, message: MessagePacket) {
     if (_localMessageBus) {
         if (!_localMessageBus.closed) {
             _localMessageBus.next(message);
-        } else {
+        } else if (settings.verbose) {
             console.warn("Tried to send request to closed local message bus", message);
         }
     }
@@ -239,8 +230,9 @@ function broadcast(settings: BrokerSettings, message: MessagePacket) {
 
 }
 
-export function createGossipNode(location: MessageLocation, settings: BrokerSettings = defaultSettings()): MessageBroker {
+export function createGossipNode(location: MessageLocation, settings: BrokerSettings = {}): MessageBroker {
     const state = emptyBrokerState(location);
+    settings = Object.assign(defaultSettings(), settings);
 
     state.pushListeners[ChatterUnsubscribeMessageKey] = (msg: any) => {
         if (msg.subscriptionId) {
@@ -272,7 +264,7 @@ export function createGossipNode(location: MessageLocation, settings: BrokerSett
                             delete state.pendingRequests[packet.id];
                             if (!subject.closed) {
                                 subject.next(packet);
-                            } else {
+                            } else if (settings.verbose) {
                                 console.warn("Tried to send message to closed request", packet);
                             }
                             return;
@@ -284,7 +276,7 @@ export function createGossipNode(location: MessageLocation, settings: BrokerSett
                             const subject = state.pendingSubscriptions[packet.id];
                             if (!subject.closed) {
                                 subject.next(packet);
-                            } else {
+                            } else if (settings.verbose) {
                                 console.warn("Tried to send message to closed subscription", packet);
                             }
                             return;
