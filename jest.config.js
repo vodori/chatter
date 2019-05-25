@@ -2,5 +2,5 @@ module.exports = {
     preset: 'ts-jest',
     testEnvironment: 'jsdom',
     verbose: true,
-    roots: ["src"]
+    roots: ["test"]
 };

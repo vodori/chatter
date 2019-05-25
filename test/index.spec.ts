@@ -1,4 +1,4 @@
-import {createGossipNode} from "./index";
+import {createGossipNode} from "../src";
 import {interval, of} from "rxjs";
 import {tap} from "rxjs/operators";
 import {fromArray} from "rxjs/internal/observable/fromArray";
