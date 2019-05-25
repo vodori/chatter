@@ -127,9 +127,11 @@ ___
 ### FAQ
 
 __Q:__ Do I have to be building a chrome extension to use this?
+
 __A:__ No. It's useful when you're dealing with iframes too.
 
 __Q:__ Do I have to have iframes to use this?
+
 __A:__ No. You can create two nodes in the same frame if you want.
 
 ___
