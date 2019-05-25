@@ -110,7 +110,7 @@ function gossipSettings(): BrokerSettings {
             if (chrome && chrome.runtime && chrome.runtime.id) {
                 verifiers.push(new RegExp(`^${chrome.runtime.id}$`));
             }
-            verifiers.push(/^example.com$/);
+            verifiers.push(/^example\.com$/);
             return verifiers.some(verifier => verifier.test(origin));
         }
     }
