@@ -87,7 +87,7 @@ broker.handleSubscriptions("serverPings", message => {
     }));
 });
 
-broker.push("BACKGROUND_SCRIPT", "SAY_HELLO");
+broker.push("BACKGROUND", "SAY_HELLO");
 
 ```
 
