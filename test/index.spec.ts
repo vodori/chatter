@@ -1,6 +1,6 @@
 import {createGossipNode} from "../src";
 import {interval, of} from "rxjs";
-import {tap} from "rxjs/operators";
+import {bufferCount, tap} from "rxjs/operators";
 import {fromArray} from "rxjs/internal/observable/fromArray";
 
 test('pushes get sent and handled', done => {
@@ -85,5 +85,103 @@ test('producers stop when subscriptions are unsubscribed', done => {
         expect(received.length).toBeLessThan(6);
         done();
     }, 100)
+
+});
+
+
+test('pushes buffer until the peer handler is available', done => {
+    const node9 = createGossipNode('node9');
+    node9.push("node10", "m1", "TEST");
+
+    const node10 = createGossipNode("node10");
+
+    node10.handlePushes("m1", msg => {
+        expect(msg).toEqual("TEST");
+        done();
+    });
+});
+
+
+test('requests buffer until the peer handler is available', done => {
+    const node11 = createGossipNode('node11');
+
+    node11.request("node12", "m1", 1).subscribe(result => {
+        expect(result).toEqual(2);
+        done();
+    });
+
+    const node12 = createGossipNode("node12");
+
+    node12.handleRequests("m1", msg => {
+        return of(msg + 1);
+    });
+
+});
+
+
+test('subscriptions buffer until the peer handler is available', done => {
+    const node13 = createGossipNode('node13');
+
+    node13.subscription("node14", "m1", 1).subscribe(result => {
+        expect(result).toEqual(2);
+        done();
+    });
+
+    const node14 = createGossipNode("node14");
+
+    node14.handleSubscriptions("m1", msg => {
+        return of(msg + 1);
+    });
+
+});
+
+test('broadcast requests solicit the entire network', done => {
+    const hub = createGossipNode("hub");
+    const x1 = createGossipNode("x1");
+    const x2 = createGossipNode("x2");
+    const x3 = createGossipNode("x3");
+
+    x1.handleRequests("moon", x => {
+        return of(x + 1);
+    });
+
+    x2.handleRequests("moon", x => {
+        return of(x + 2);
+    });
+
+    x3.handleRequests("moon", x => {
+        return of(x + 3);
+    });
+
+    hub.broadcastRequest("moon", 1).pipe(bufferCount(3)).subscribe(response => {
+        expect(response.length).toEqual(3);
+        done();
+    });
+
+});
+
+
+test('broadcast subscriptions solicit the entire network', done => {
+    const hub = createGossipNode("hub");
+    const x1 = createGossipNode("x1");
+    const x2 = createGossipNode("x2");
+    const x3 = createGossipNode("x3");
+
+    x1.handleSubscriptions("moon", x => {
+        return of(x + 1);
+    });
+
+    x2.handleSubscriptions("moon", x => {
+        return of(x + 2);
+    });
+
+    x3.handleSubscriptions("moon", x => {
+        return of(x + 3);
+    });
+
+    hub.broadcastSubscription("moon", 1).pipe(bufferCount(3)).subscribe(response => {
+        expect(response.length).toEqual(3);
+        done();
+    });
 
 });

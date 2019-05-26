@@ -1,5 +1,5 @@
-import {Observable, Subject, Subscription} from "rxjs";
-import {first} from "rxjs/operators";
+import {BehaviorSubject, Observable, Subject, Subscription} from "rxjs";
+import {first, map, pairwise} from "rxjs/operators";
 
 export enum MessageProtocol {
     PUSH,
@@ -16,13 +16,20 @@ export type MessageResponder = (msg: any) => Observable<any>;
 export type MessagePublisher = (msg: any) => Observable<any>;
 export type Predicate<T> = (x: T) => boolean;
 
-export const ChatterUnsubscribeMessageKey = "_ChatterUnsubscribe";
+const ChatterUnsubscribeMessageKey = "_ChatterUnsubscribe";
+const ChatterNodeJoinedKey = "_ChatterNodeJoined";
+const ChatterWildcardTarget = "*";
 
 const _global = window;
 const _chrome = _global.chrome;
 const _window = _global.window;
 const _document = _global.document;
 const _localMessageBus = new Subject<MessagePacket>();
+
+export interface AddressedPayload {
+    location: MessageLocation,
+    data: MessagePayload
+}
 
 export interface MessagePacket {
     id: MessageID;
@@ -35,6 +42,11 @@ export interface MessagePacket {
 
 interface BrokerState {
     seen: Set<number>,
+    peers: BehaviorSubject<Set<MessageLocation>>,
+    outboundBuffer: { [s: string]: MessagePacket[] },
+    inboundPushBuffer: { [s: string]: MessagePacket[] },
+    inboundRequestBuffer: { [s: string]: MessagePacket[] },
+    inboundSubscriptionBuffer: { [s: string]: MessagePacket[] },
     location: MessageLocation,
     openProducers: { [s: string]: Subscription }
     pushListeners: { [s: string]: MessageConsumer },
@@ -42,7 +54,6 @@ interface BrokerState {
     subscriptionListeners: { [s: string]: MessagePublisher },
     pendingRequests: { [s: string]: Subject<MessagePacket> },
     pendingSubscriptions: { [s: string]: Subject<MessagePacket> },
-
 }
 
 export interface BrokerSettings {
@@ -52,60 +63,22 @@ export interface BrokerSettings {
 
 export interface MessageBroker {
 
-    /**
-     * Send a one-way message to the specified location.
-     *
-     * @param dest - The destination
-     * @param kind - The type of message
-     * @param message - The message data
-     */
+    broadcastPush(kind: MessageKey, message?: MessagePayload): void;
+
+    broadcastRequest(kind: MessageKey, message?: MessagePayload): Observable<AddressedPayload>;
+
+    broadcastSubscription(kind: MessageKey, message?: MessagePayload): Observable<AddressedPayload>;
+
     push(dest: MessageLocation, kind: MessageKey, message?: MessagePayload): void;
 
-    /**
-     * Send a request message to the specified location and get an observable
-     * that will emit the response.
-     *
-     * @param dest - The destination
-     * @param kind - The type of message
-     * @param message - The message data
-     */
     request(dest: MessageLocation, kind: MessageKey, message?: MessagePayload): Observable<MessagePayload>;
 
-    /**
-     * Send a request message to the specified location and get an observable
-     * that will emit each message produced..
-     *
-     * @param dest - The destination
-     * @param kind - The type of message
-     * @param message - The message data
-     */
     subscription(dest: MessageLocation, kind: MessageKey, message?: MessagePayload): Observable<MessagePayload>;
 
-    /**
-     * Setup a handler that will be invoked every time this location receives
-     * a push message.
-     *
-     * @param kind - The type of message
-     * @param handler - The callback function
-     */
     handlePushes(kind: MessageKey, handler: MessageConsumer): void;
 
-    /**
-     * Setup a  handler that will be invoked to produce a response every time this location
-     * receives a request message.
-     *
-     * @param kind - The type of message
-     * @param handler - The callback function that eventually produces a response.
-     */
     handleRequests(kind: MessageKey, handler: MessageResponder): void;
 
-    /**
-     * Setup a  handler that will be invoked to produce one or more responses every
-     * time this location receives a subscription message.
-     *
-     * @param kind - The type of message
-     * @param handler - The callback function that may eventually produce responses.
-     */
     handleSubscriptions(kind: MessageKey, handler: MessagePublisher): void;
 }
 
@@ -120,6 +93,11 @@ function defaultSettings(): BrokerSettings {
 function emptyBrokerState(location: MessageLocation): BrokerState {
     return {
         location: location,
+        peers: new BehaviorSubject(new Set()),
+        outboundBuffer: {},
+        inboundPushBuffer: {},
+        inboundRequestBuffer: {},
+        inboundSubscriptionBuffer: {},
         seen: new Set(),
         openProducers: {},
         pendingRequests: {},
@@ -230,38 +208,88 @@ function broadcast(settings: BrokerSettings, message: MessagePacket) {
 
 }
 
+export function union<T>(s1: Set<T>, s2: Set<T>): Set<T> {
+    const results = new Set();
+    s1.forEach(x => results.add(x));
+    s2.forEach(x => results.add(x));
+    return results;
+}
+
+export function difference<T>(s1: Set<T>, s2: Set<T>): Set<T> {
+    const results = new Set();
+    s1.forEach(s => {
+        if (!s2.has(s)) {
+            results.add(s);
+        }
+    });
+    return s1;
+}
+
 export function createGossipNode(location: MessageLocation, settings: BrokerSettings = {}): MessageBroker {
-    const state = emptyBrokerState(location);
     settings = Object.assign(defaultSettings(), settings);
 
-    state.pushListeners[ChatterUnsubscribeMessageKey] = (msg: any) => {
-        if (msg.subscriptionId) {
-            const subject = state.openProducers[msg.subscriptionId];
-            delete state.openProducers[msg.subscriptionId];
-            if (subject) {
-                subject.unsubscribe();
+    const state = emptyBrokerState(location);
+
+    state.peers.pipe(pairwise()).subscribe(([s1, s2]) => {
+        difference(s2, s1).forEach(x => {
+            if (state.outboundBuffer[x]) {
+                state.outboundBuffer[x].forEach(msg => send(msg));
+                delete state.outboundBuffer[x];
             }
-        }
-    };
+            if (state.outboundBuffer[ChatterWildcardTarget]) {
+                state.outboundBuffer[ChatterWildcardTarget].forEach(msg => send(msg));
+            }
+        })
+    });
 
     const send = (msg: MessagePacket): void => {
         state.seen.add(computeMessageHash(msg));
-        broadcast(settings, msg);
+
+        const knownTargets = state.peers.getValue();
+
+        if (msg.target === state.location) {
+            return;
+        }
+
+        if (msg.target === ChatterWildcardTarget) {
+            broadcast(settings, msg);
+            return;
+        }
+
+        if (knownTargets.has(msg.target)) {
+            broadcast(settings, msg);
+            return;
+        } else {
+            const buffer = state.outboundBuffer[msg.target] || [];
+            buffer.push(msg);
+            state.outboundBuffer[msg.target] = buffer;
+        }
+
     };
 
     const receive = (message: any) => {
         if (quacksLikeAGossipPacket(message)) {
             const packet = <MessagePacket>message;
+            if (packet.source === state.location) {
+                return;
+            }
+
             const hash = computeMessageHash(message);
             if (!state.seen.has(hash)) {
                 state.seen.add(hash);
 
-                if (packet.target === state.location) {
+                const knownTargets = state.peers.getValue();
+
+                if (!knownTargets.has(packet.source)) {
+                    const seen = union(knownTargets, new Set([packet.source]));
+                    state.peers.next(seen);
+                }
+
+                if (packet.target === ChatterWildcardTarget || packet.target === state.location) {
 
                     if (packet.protocol === MessageProtocol.REQUEST_REPLY) {
                         if (state.pendingRequests[packet.id]) {
                             const subject = state.pendingRequests[packet.id];
-                            delete state.pendingRequests[packet.id];
                             if (!subject.closed) {
                                 subject.next(packet);
                             } else if (settings.verbose) {
@@ -288,7 +316,9 @@ export function createGossipNode(location: MessageLocation, settings: BrokerSett
                         if (handler) {
                             handler(packet.data);
                         } else {
-                            console.warn("Received packet of unknown kind.", packet);
+                            const buffer = state.inboundPushBuffer[packet.key] || [];
+                            buffer.push(packet);
+                            state.inboundPushBuffer[packet.key] = buffer;
                         }
                         return;
                     }
@@ -297,20 +327,22 @@ export function createGossipNode(location: MessageLocation, settings: BrokerSett
                         const handler = state.requestListeners[packet.key];
                         if (handler) {
                             const responseObservable = handler(packet.data);
-                            responseObservable.pipe(first()).subscribe(response => {
+                            state.openProducers[packet.id] = responseObservable.pipe(first()).subscribe(response => {
 
                                 send({
                                     id: packet.id,
                                     key: packet.key,
                                     protocol: packet.protocol,
-                                    source: packet.target,
+                                    source: state.location,
                                     target: packet.source,
                                     data: response
                                 });
 
                             });
                         } else {
-                            console.warn("Received packet of unknown kind.", packet);
+                            const buffer = state.inboundRequestBuffer[packet.key] || [];
+                            buffer.push(packet);
+                            state.inboundRequestBuffer[packet.key] = buffer;
                         }
                         return;
                     }
@@ -325,18 +357,20 @@ export function createGossipNode(location: MessageLocation, settings: BrokerSett
                                     id: packet.id,
                                     key: packet.key,
                                     protocol: packet.protocol,
-                                    source: packet.target,
+                                    source: state.location,
                                     target: packet.source,
                                     data: response
                                 });
                             });
                         } else {
-                            console.warn("Received packet of unknown kind.", packet);
+                            const buffer = state.inboundSubscriptionBuffer[packet.key] || [];
+                            buffer.push(packet);
+                            state.inboundSubscriptionBuffer[packet.key] = buffer;
                         }
                     }
+                }
 
-                } else {
-                    // forward packet intended for another location
+                if (packet.target !== state.location) {
                     send(packet);
                 }
             }
@@ -364,93 +398,171 @@ export function createGossipNode(location: MessageLocation, settings: BrokerSett
         });
     }
 
-    return {
-        handlePushes(kind: MessageKey, handler: MessageConsumer): void {
-            state.pushListeners[kind] = handler;
-        },
-        handleRequests(kind: MessageKey, handler: MessageResponder): void {
-            state.requestListeners[kind] = handler;
-        },
-        handleSubscriptions(kind: MessageKey, handler: MessagePublisher): void {
-            state.subscriptionListeners[kind] = handler;
-        },
-        push<T>(dest: MessageLocation, kind: MessageKey, message: MessagePayload = {}): void {
+    const pushRaw = (dest: MessageLocation, kind: MessageKey, message: MessagePayload = {}): void => {
+        send({
+            id: uuid(),
+            protocol: MessageProtocol.PUSH,
+            source: state.location,
+            target: dest,
+            key: kind,
+            data: message
+        });
+    };
+
+    const requestRaw = (dest: string, kind: string, message: MessagePayload = {}): Observable<MessagePacket> => {
+        return new Observable(observer => {
+
             const transaction = uuid();
+            const subject = new Subject<MessagePacket>();
+            state.pendingRequests[transaction] = subject;
+
+            const sub = subject.subscribe(result => {
+                observer.next(result);
+            });
 
             send({
                 id: transaction,
-                protocol: MessageProtocol.PUSH,
+                protocol: MessageProtocol.REQUEST_REPLY,
                 source: state.location,
                 target: dest,
                 key: kind,
                 data: message
             });
 
+            return () => {
+                send({
+                    id: uuid(),
+                    protocol: MessageProtocol.PUSH,
+                    source: state.location,
+                    target: dest,
+                    key: ChatterUnsubscribeMessageKey,
+                    data: {providerId: transaction}
+                });
+
+                delete state.pendingRequests[transaction];
+                sub.unsubscribe();
+                subject.unsubscribe();
+            }
+        });
+    };
+
+    const subscriptionRaw = (dest: string, kind: string, message: MessagePayload = {}): Observable<MessagePacket> => {
+        return new Observable(observer => {
+
+            const transaction = uuid();
+            const subject = new Subject<MessagePacket>();
+            state.pendingSubscriptions[transaction] = subject;
+
+            const sub = subject.subscribe(result => {
+                observer.next(result);
+            });
+
+            send({
+                id: transaction,
+                protocol: MessageProtocol.TOPIC_SUBSCRIBE,
+                source: state.location,
+                target: dest,
+                key: kind,
+                data: message
+            });
+
+            return () => {
+                send({
+                    id: uuid(),
+                    protocol: MessageProtocol.PUSH,
+                    source: state.location,
+                    target: dest,
+                    key: ChatterUnsubscribeMessageKey,
+                    data: {providerId: transaction}
+                });
+
+                delete state.pendingSubscriptions[transaction];
+                sub.unsubscribe();
+                subject.unsubscribe();
+            };
+        });
+    };
+
+    const resubmit = (msg: MessagePacket) => {
+        state.seen.delete(computeMessageHash(msg));
+        receive(msg);
+    };
+
+    const broker: MessageBroker = {
+        push(dest: MessageLocation, kind: MessageKey, message: MessagePayload = {}): void {
+            pushRaw(dest, kind, message);
         },
         request(dest: MessageLocation, kind: MessageKey, message: MessagePayload = {}): Observable<MessagePayload> {
-            return new Observable(observer => {
-
-                const transaction = uuid();
-                const subject = new Subject<MessagePacket>();
-                state.pendingRequests[transaction] = subject;
-
-                const sub = subject.subscribe(result => {
-                    observer.next(result.data);
-                });
-
-                send({
-                    id: transaction,
-                    protocol: MessageProtocol.REQUEST_REPLY,
-                    source: state.location,
-                    target: dest,
-                    key: kind,
-                    data: message
-                });
-
-                return () => {
-                    delete state.pendingRequests[transaction];
-                    sub.unsubscribe();
-                    subject.unsubscribe();
-                }
-            });
+            return requestRaw(dest, kind, message).pipe(map(msg => msg.data));
         },
         subscription(dest: MessageLocation, kind: MessageKey, message: MessagePayload = {}): Observable<MessagePayload> {
-            return new Observable(observer => {
-
-                const transaction = uuid();
-                const subject = new Subject<MessagePacket>();
-                state.pendingSubscriptions[transaction] = subject;
-
-                const sub = subject.subscribe(result => {
-                    observer.next(result.data);
-                });
-
-                send({
-                    id: transaction,
-                    protocol: MessageProtocol.TOPIC_SUBSCRIBE,
-                    source: state.location,
-                    target: dest,
-                    key: kind,
-                    data: message
-                });
-
-                return () => {
-                    send({
-                        id: uuid(),
-                        protocol: MessageProtocol.PUSH,
-                        source: state.location,
-                        target: dest,
-                        key: ChatterUnsubscribeMessageKey,
-                        data: {subscriptionId: transaction}
-                    });
-
-                    delete state.pendingSubscriptions[transaction];
-                    sub.unsubscribe();
-                    subject.unsubscribe();
-                };
+            return subscriptionRaw(dest, kind, message).pipe(map(msg => msg.data));
+        },
+        broadcastPush(kind: string, message: MessagePayload = {}): void {
+            pushRaw(ChatterWildcardTarget, kind, message);
+        },
+        broadcastRequest(kind: string, message: MessagePayload = {}): Observable<AddressedPayload> {
+            return requestRaw(ChatterWildcardTarget, kind, message).pipe(map(msg => {
+                return <AddressedPayload>{location: msg.source, data: msg.data};
+            }));
+        },
+        broadcastSubscription(kind: string, message: MessagePayload = {}): Observable<AddressedPayload> {
+            return subscriptionRaw(ChatterWildcardTarget, kind, message).pipe(map(msg => {
+                return <AddressedPayload>{location: msg.source, data: msg.data};
+            }));
+        },
+        handlePushes(kind: MessageKey, handler: MessageConsumer): void {
+            state.pushListeners[kind] = handler;
+            (state.inboundPushBuffer[kind] || []).forEach(result => {
+                resubmit(result);
             });
-
+            delete state.inboundPushBuffer[kind];
+        },
+        handleRequests(kind: MessageKey, handler: MessageResponder): void {
+            state.requestListeners[kind] = handler;
+            (state.inboundRequestBuffer[kind] || []).forEach(result => {
+                resubmit(result);
+            });
+            delete state.inboundRequestBuffer[kind];
+        },
+        handleSubscriptions(kind: MessageKey, handler: MessagePublisher): void {
+            state.subscriptionListeners[kind] = handler;
+            (state.inboundSubscriptionBuffer[kind] || []).forEach(result => {
+                resubmit(result);
+            });
+            delete state.inboundSubscriptionBuffer[kind];
         }
+    };
 
-    }
+    broker.handlePushes(ChatterUnsubscribeMessageKey, msg => {
+        if (msg.providerId) {
+            const subject = state.openProducers[msg.providerId];
+            delete state.openProducers[msg.providerId];
+            if (subject) {
+                subject.unsubscribe();
+            }
+        }
+    });
+
+    broker.handleSubscriptions(ChatterNodeJoinedKey, msg => {
+        return new Observable(observer => {
+            const sub = state.peers.subscribe(peers => {
+                observer.next(peers);
+            });
+            return () => {
+                sub.unsubscribe();
+            };
+        })
+    });
+
+    broker.broadcastSubscription(ChatterNodeJoinedKey).subscribe(peerPeers => {
+        const friendsOfKevinBacon = union(new Set<string>(peerPeers.data), new Set([peerPeers.location]));
+        const friendsOfMine = state.peers.getValue();
+        const reachable = union(friendsOfMine, friendsOfKevinBacon);
+        if (reachable.size > friendsOfMine.size) {
+            state.peers.next(reachable);
+        }
+    });
+
+    return broker;
 }
