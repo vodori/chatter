@@ -9,7 +9,7 @@ var MessageProtocol;
     MessageProtocol[MessageProtocol["TOPIC_SUBSCRIBE"] = 2] = "TOPIC_SUBSCRIBE";
 })(MessageProtocol = exports.MessageProtocol || (exports.MessageProtocol = {}));
 exports.ChatterUnsubscribeMessageKey = "_ChatterUnsubscribe";
-const _global = this;
+const _global = window;
 const _chrome = _global.chrome;
 const _window = _global.window;
 const _document = _global.document;
@@ -232,7 +232,7 @@ function createGossipNode(location, settings = {}) {
     if (_localMessageBus) {
         _localMessageBus.subscribe(receive);
     }
-    if (_global.window && _window.addEventListener) {
+    if (_window && _window.addEventListener) {
         _window.addEventListener("message", event => {
             if (settings.originVerifier(extractHostname(event.origin))) {
                 receive(event.data);

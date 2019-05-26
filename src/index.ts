@@ -18,7 +18,7 @@ export type Predicate<T> = (x: T) => boolean;
 
 export const ChatterUnsubscribeMessageKey = "_ChatterUnsubscribe";
 
-const _global = this;
+const _global = window;
 const _chrome = _global.chrome;
 const _window = _global.window;
 const _document = _global.document;
@@ -348,7 +348,7 @@ export function createGossipNode(location: MessageLocation, settings: BrokerSett
         _localMessageBus.subscribe(receive);
     }
 
-    if (_global.window && _window.addEventListener) {
+    if (_window && _window.addEventListener) {
         _window.addEventListener("message", event => {
             if (settings.originVerifier(extractHostname(event.origin))) {
                 receive(event.data);
