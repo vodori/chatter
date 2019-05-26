@@ -39,7 +39,7 @@ From a chrome-extension background script.
 
 ```typescript
 
-import {createGossipNode} from "chatter";
+import {createGossipNode} from "@vodori/chatter";
 
 const broker = createGossipNode("BACKGROUND");
 
@@ -59,7 +59,7 @@ broker.handlePushes("SAY_HELLO", message => {
 From a chrome-extension content script.
 
 ```typescript
-import {createGossipNode} from "chatter";
+import {createGossipNode} from "vodori/chatter";
 import {of} from "rxjs";
 
 const broker = createGossipNode("CONTENT_SCRIPT");
@@ -74,7 +74,7 @@ From an iframe inside an iframe injected by a content script.
 
 ```typescript
 
-import {createGossipNode} from "chatter";
+import {createGossipNode} from "vodori/chatter";
 import {interval, map, switchMap, fromPromise} from "rxjs";
 
 const broker = createGossipNode("MY_IFRAME");
@@ -101,7 +101,7 @@ want code listening in an untrusted frame to intercept traffic only intended for
 You should define an originVerifier at each node to constrain the inbound and outbound messages.
 
 ```typescript
-import {createGossipNode, BrokerSettings} from "chatter";
+import {createGossipNode, BrokerSettings} from "vodori/chatter";
 
 function gossipSettings(): BrokerSettings {
     return {
