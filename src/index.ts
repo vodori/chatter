@@ -31,6 +31,7 @@ export interface MessagePacket {
     protocol: MessageProtocol;
     key: MessageKey;
     data: MessagePayload;
+    _bust?: string
 }
 
 interface BrokerState {
@@ -327,7 +328,8 @@ export function createGossipNode(location: MessageLocation, settings: BrokerSett
                                     protocol: packet.protocol,
                                     source: packet.target,
                                     target: packet.source,
-                                    data: response
+                                    data: response,
+                                    _bust: uuid(),
                                 });
                             });
                         } else {
