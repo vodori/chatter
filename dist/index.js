@@ -213,7 +213,8 @@ function createGossipNode(location, settings = {}) {
                                     protocol: packet.protocol,
                                     source: packet.target,
                                     target: packet.source,
-                                    data: response
+                                    data: response,
+                                    _bust: uuid(),
                                 });
                             });
                         }

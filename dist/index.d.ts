@@ -20,6 +20,7 @@ export interface MessagePacket {
     protocol: MessageProtocol;
     key: MessageKey;
     data: MessagePayload;
+    _bust?: string;
 }
 export interface BrokerSettings {
     verbose?: boolean;
