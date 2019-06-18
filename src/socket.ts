@@ -6,6 +6,10 @@ import {shortestPath} from "./topo";
 
 const sockets: { [s: string]: Socket } = {};
 
+const deepClone = x => JSON.parse(JSON.stringify(x));
+
+const deepEquals = (a, b) => (JSON.stringify(a) === JSON.stringify(b));
+
 export function defaultSettings(): Settings {
     return {
         startingTTL: 10,
@@ -17,19 +21,16 @@ export function defaultSettings(): Settings {
 function create(address: string, settings: Settings): Socket {
     settings = Object.assign({}, defaultSettings(), settings);
 
-    const receivers: { [s: string]: Receiver } = {};
-    const pushListeners: { [s: string]: PushListener } = {};
-    const requestListeners: { [s: string]: RequestListener } = {};
-    const subscriptionListeners: { [s: string]: SubscriptionListener } = {};
-
     const network: BehaviorSubject<Network> = new BehaviorSubject((() => {
         const net = {};
         net[address] = [];
         return net;
     })());
 
-    const deepClone = x => JSON.parse(JSON.stringify(x));
-    const deepEquals = (a, b) => (JSON.stringify(a) === JSON.stringify(b));
+    const receivers: { [s: string]: Receiver } = {};
+    const pushListeners: { [s: string]: PushListener } = {};
+    const requestListeners: { [s: string]: RequestListener } = {};
+    const subscriptionListeners: { [s: string]: SubscriptionListener } = {};
     const inboundPushBuffer: { [s: string]: NetPacket[] } = {};
     const inboundRequestBuffer: { [s: string]: NetPacket[] } = {};
     const inboundSubscriptionBuffer: { [s: string]: NetPacket[] } = {};
@@ -47,9 +48,11 @@ function create(address: string, settings: Settings): Socket {
 
             if (!peers.hasOwnProperty(packet.header.source)) {
                 const currentNet = deepClone(network.getValue());
-                currentNet[address].push(packet.header.source);
                 peers[packet.header.source] = neighbor;
-                network.next(currentNet);
+                if (!currentNet[address].includes(packet.header.source)) {
+                    currentNet[address].push(packet.header.source);
+                    network.next(currentNet);
+                }
             }
         }
     }
@@ -235,20 +238,92 @@ function create(address: string, settings: Settings): Socket {
             case AppProto.REQUEST:
                 if (receivers.hasOwnProperty(msg.body.header.transaction)) {
                     const receiver = receivers[msg.body.header.transaction];
-                    receiver.next(msg.body);
+                    if (msg.body.header.next) {
+                        receiver.next(msg.body);
+                    }
+
+                    if (msg.body.header.error) {
+                        receiver.error(msg.body);
+                    }
+
+                    if (msg.body.header.complete) {
+                        receiver.complete();
+                    }
+
                     return true;
                 } else if (requestListeners.hasOwnProperty(msg.body.header.key)) {
                     const handler = requestListeners[msg.body.header.key];
                     const response = handler(msg.body);
-                    const subject = new Subject();
-                    const sub = response.pipe(first()).subscribe(response => {
-                        subject.next(response);
+                    openSubscriptions[msg.body.header.transaction] = response.pipe(first()).subscribe(response => {
+                        send({
+                            header: {
+                                id: uuid(),
+                                protocol: NetProto.POINT_TO_POINT,
+                                target: msg.header.source,
+                                source: address,
+                                ttl: msg.header.ttl
+                            },
+                            body: {
+                                header: {
+                                    transaction: msg.body.header.transaction,
+                                    source: address,
+                                    target: msg.body.header.source,
+                                    protocol: AppProto.REQUEST,
+                                    key: msg.body.header.key,
+                                    next: true,
+                                    error: false,
+                                    complete: false
+                                },
+                                body: response
+                            }
+                        })
+                    }, error => {
+                        send({
+                            header: {
+                                id: uuid(),
+                                protocol: NetProto.POINT_TO_POINT,
+                                target: msg.header.source,
+                                source: address,
+                                ttl: msg.header.ttl
+                            },
+                            body: {
+                                header: {
+                                    transaction: msg.body.header.transaction,
+                                    source: address,
+                                    target: msg.body.header.source,
+                                    protocol: AppProto.REQUEST,
+                                    key: msg.body.header.key,
+                                    next: false,
+                                    error: true,
+                                    complete: false
+                                },
+                                body: error
+                            }
+                        })
+                    }, () => {
+                        send({
+                            header: {
+                                id: uuid(),
+                                protocol: NetProto.POINT_TO_POINT,
+                                target: msg.header.source,
+                                source: address,
+                                ttl: msg.header.ttl
+                            },
+                            body: {
+                                header: {
+                                    transaction: msg.body.header.transaction,
+                                    source: address,
+                                    target: msg.body.header.source,
+                                    protocol: AppProto.REQUEST,
+                                    key: msg.body.header.key,
+                                    next: false,
+                                    error: false,
+                                    complete: true
+                                },
+                                body: {}
+                            }
+                        })
                     });
-                    const original = subject.unsubscribe;
-                    subject.unsubscribe = () => {
-                        original();
-                        sub.unsubscribe();
-                    };
                     return true;
                 } else {
                     return false;
@@ -256,7 +331,18 @@ function create(address: string, settings: Settings): Socket {
             case AppProto.SUBSCRIPTION:
                 if (receivers.hasOwnProperty(msg.body.header.transaction)) {
                     const receiver = receivers[msg.body.header.transaction];
-                    receiver.next(msg.body);
+
+                    if (msg.body.header.next) {
+                        receiver.next(msg.body);
+                    }
+
+                    if (msg.body.header.error) {
+                        receiver.error(msg.body);
+                    }
+
+                    if (msg.body.header.complete) {
+                        receiver.complete();
+                    }
                     return true;
                 } else if (subscriptionListeners.hasOwnProperty(msg.body.header.key)) {
                     const handler = subscriptionListeners[msg.body.header.key];
@@ -276,9 +362,58 @@ function create(address: string, settings: Settings): Socket {
                                     source: address,
                                     target: msg.body.header.source,
                                     protocol: AppProto.SUBSCRIPTION,
-                                    key: msg.body.header.key
+                                    key: msg.body.header.key,
+                                    next: true,
+                                    error: false,
+                                    complete: false,
                                 },
                                 body: response
+                            }
+                        })
+                    }, error => {
+                        send({
+                            header: {
+                                id: uuid(),
+                                protocol: NetProto.POINT_TO_POINT,
+                                target: msg.header.source,
+                                source: address,
+                                ttl: msg.header.ttl
+                            },
+                            body: {
+                                header: {
+                                    transaction: msg.body.header.transaction,
+                                    source: address,
+                                    target: msg.body.header.source,
+                                    protocol: AppProto.SUBSCRIPTION,
+                                    key: msg.body.header.key,
+                                    next: false,
+                                    error: true,
+                                    complete: false
+                                },
+                                body: error
+                            }
+                        })
+                    }, () => {
+                        send({
+                            header: {
+                                id: uuid(),
+                                protocol: NetProto.POINT_TO_POINT,
+                                target: msg.header.source,
+                                source: address,
+                                ttl: msg.header.ttl
+                            },
+                            body: {
+                                header: {
+                                    transaction: msg.body.header.transaction,
+                                    source: address,
+                                    target: msg.body.header.source,
+                                    protocol: AppProto.SUBSCRIPTION,
+                                    key: msg.body.header.key,
+                                    next: false,
+                                    error: false,
+                                    complete: true
+                                },
+                                body: {}
                             }
                         })
                     });
@@ -353,7 +488,10 @@ function create(address: string, settings: Settings): Socket {
                 protocol: AppProto.PUSH,
                 source: address,
                 target: "__*__",
-                transaction: uuid()
+                transaction: uuid(),
+                error: false,
+                next: true,
+                complete: false
             };
 
             const appPacket: AppPacket = {
@@ -369,54 +507,94 @@ function create(address: string, settings: Settings): Socket {
             broadcast(netPacket);
         },
         broadcastRequest(key: string, message: any = {}): Observable<any> {
-            const subject = new Subject<AppPacket>();
-            const transaction = uuid();
-            receivers[transaction] = subject;
-            broadcast({
-                header: {
-                    ttl: settings.startingTTL,
-                    target: "__*__",
-                    source: address,
-                    protocol: NetProto.BROADCAST,
-                    id: uuid()
-                },
-                body: {
+            return new Observable(observer => {
+
+                const subject = new Subject<AppPacket>();
+                const transaction = uuid();
+
+                receivers[transaction] = subject;
+
+                const sub = subject.subscribe(message => {
+                    observer.next(message);
+                }, error => {
+                    observer.error(error);
+                }, () => {
+                    observer.complete();
+                });
+
+                broadcast({
                     header: {
-                        key: key,
-                        protocol: AppProto.REQUEST,
-                        source: address,
+                        ttl: settings.startingTTL,
                         target: "__*__",
-                        transaction: transaction
+                        source: address,
+                        protocol: NetProto.BROADCAST,
+                        id: uuid()
                     },
-                    body: message
-                }
+                    body: {
+                        header: {
+                            key: key,
+                            protocol: AppProto.REQUEST,
+                            source: address,
+                            target: "__*__",
+                            transaction: transaction,
+                            error: false,
+                            next: true,
+                            complete: false
+                        },
+                        body: message
+                    }
+                });
+
+                return () => {
+                    delete receivers[transaction];
+                    sub.unsubscribe();
+                };
+
             });
-            return subject;
         },
         broadcastSubscription(key: string, message: any = {}): Observable<any> {
-            const subject = new Subject<AppPacket>();
-            const transaction = uuid();
-            receivers[transaction] = subject;
-            broadcast({
-                header: {
-                    ttl: settings.startingTTL,
-                    target: "__*__",
-                    source: address,
-                    protocol: NetProto.BROADCAST,
-                    id: uuid()
-                },
-                body: {
+            return new Observable(observer => {
+
+                const subject = new Subject<AppPacket>();
+                const transaction = uuid();
+                receivers[transaction] = subject;
+
+                const sub = subject.subscribe(message => {
+                    observer.next(message);
+                }, error => {
+                    observer.error(error);
+                }, () => {
+                    observer.complete();
+                });
+
+                broadcast({
                     header: {
-                        key: key,
-                        protocol: AppProto.SUBSCRIPTION,
-                        source: address,
+                        ttl: settings.startingTTL,
                         target: "__*__",
-                        transaction: transaction
+                        source: address,
+                        protocol: NetProto.BROADCAST,
+                        id: uuid()
                     },
-                    body: message
-                }
+                    body: {
+                        header: {
+                            key: key,
+                            protocol: AppProto.SUBSCRIPTION,
+                            source: address,
+                            target: "__*__",
+                            transaction: transaction,
+                            error: false,
+                            next: true,
+                            complete: false
+                        },
+                        body: message
+                    }
+                });
+
+                return () => {
+                    delete receivers[transaction];
+                    sub.unsubscribe();
+                };
             });
-            return subject;
         },
         handlePushes(key: string, callback: (msg: AppPacket) => void): void {
             pushListeners[key] = callback;
@@ -444,7 +622,10 @@ function create(address: string, settings: Settings): Socket {
                         source: address,
                         transaction: uuid(),
                         protocol: AppProto.PUSH,
-                        key: key
+                        key: key,
+                        error: false,
+                        next: true,
+                        complete: false
                     },
                     body: message
                 }
@@ -461,6 +642,10 @@ function create(address: string, settings: Settings): Socket {
 
                 const subscription = subject.subscribe(msg => {
                     observer.next(msg);
+                }, error => {
+                    observer.error(error);
+                }, () => {
+                    observer.complete();
                 });
 
                 send({
@@ -477,7 +662,10 @@ function create(address: string, settings: Settings): Socket {
                             source: address,
                             transaction: transaction,
                             protocol: AppProto.REQUEST,
-                            key: key
+                            key: key,
+                            complete: false,
+                            next: true,
+                            error: false
                         },
                         body: message
                     }
@@ -500,6 +688,10 @@ function create(address: string, settings: Settings): Socket {
 
                 const subscription = subject.subscribe(msg => {
                     observer.next(msg);
+                }, error => {
+                    observer.error(error);
+                }, () => {
+                    observer.complete();
                 });
 
                 send({
@@ -516,7 +708,10 @@ function create(address: string, settings: Settings): Socket {
                             source: address,
                             transaction: transaction,
                             protocol: AppProto.SUBSCRIPTION,
-                            key: key
+                            key: key,
+                            next: true,
+                            error: false,
+                            complete: false
                         },
                         body: message
                     }

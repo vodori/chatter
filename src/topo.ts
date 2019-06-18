@@ -86,6 +86,6 @@ export function shortestPath(net: Network, a: string, b: string) {
     if (paths.length) {
         return paths[0];
     } else {
-        return null;
+        return [];
     }
 }

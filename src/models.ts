@@ -31,6 +31,9 @@ export interface AppHeader {
     target: string;
     transaction: string;
     key: string;
+    next: boolean;
+    error: boolean;
+    complete: boolean;
 }
 
 export interface NetPacket {
