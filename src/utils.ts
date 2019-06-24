@@ -8,17 +8,23 @@ export function mergeNetworks(net1: Network, net2: Network): Network {
         if (k in net2) {
             net2[k].forEach(v => vs.add(v));
         }
+        vs.delete(k);
         merged[k] = Array.from(vs).sort();
     }
 
     for (let k in net2) {
         if (!(k in net1)) {
             const vs = new Set(net2[k]);
+            vs.delete(k);
             merged[k] = Array.from(vs).sort();
         }
     }
 
     return merged;
+}
+
+export function deepEquals(a, b): boolean {
+    return (JSON.stringify(a) === JSON.stringify(b));
 }
 
 export function isObject(o: any) {

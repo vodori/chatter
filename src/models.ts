@@ -7,8 +7,8 @@ export const _document: Document = _global.document;
 export const _localMessageBus = new Subject<NetPacket>();
 
 export enum NetProto {
-    POINT_TO_POINT = <any>"POINT_TO_POINT",
-    BROADCAST = <any>"BROADCAST"
+    BROADCAST = <any>"BROADCAST",
+    POINT_TO_POINT = <any>"POINT_TO_POINT"
 }
 
 export enum AppProto {
@@ -19,21 +19,31 @@ export enum AppProto {
 
 export interface NetHeader {
     id: string;
-    ttl: number;
     source: string;
-    target: string;
+    target?: string;
     protocol: NetProto
 }
 
 export interface AppHeader {
+
+    // what kind of thing is happening
     protocol: AppProto
+
+    // the source requesting the stream
     source: string;
-    target: string;
+
+    // the target providing the stream
+    target?: string;
+
+    // identifies the stream
     transaction: string;
+
+    // identifies the remote handler
     key: string;
-    next: boolean;
-    error: boolean;
-    complete: boolean;
+
+    next?: boolean;
+    error?: boolean;
+    complete?: boolean;
 }
 
 export interface NetPacket {
@@ -52,18 +62,18 @@ export type RequestListener = (msg: AppPacket) => Observable<any>;
 export type SubscriptionListener = (msg: AppPacket) => Observable<any>;
 
 export interface Settings {
-    startingTTL?: number,
     trustedOrigins?: Set<string>
 }
 
+export function defaultSettings(): Settings {
+    return {trustedOrigins: new Set()}
+}
 export type Network = { [s: string]: string[] };
 
-export interface DiscoveryMessage {
-    source: string;
-    network: Network
-}
 
 export interface Socket {
+
+    bind(): void;
 
     discover(): Observable<Network>;
 
