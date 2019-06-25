@@ -1,7 +1,8 @@
-import {bind} from "../src";
-import {combineLatest, interval, of} from "rxjs";
+import {bind, Socket} from "../src";
+import {combineLatest, forkJoin, interval, of, throwError} from "rxjs";
 import {tap} from "rxjs/operators";
 import {fromArray} from "rxjs/internal/observable/fromArray";
+import {uuid} from "../src/utils";
 
 
 test('automatic discovery', done => {
@@ -164,18 +165,129 @@ test('subscriptions buffer until the peer handler is available', done => {
 
 });
 
-// test('error propagation of requests', done => {
-//
-// });
-//
-// test('completion propagation of requests', done => {
-//
-// });
-//
-// test('error propagation of subscriptions', done => {
-//
-// });
-//
-// test('completion propagation of subscriptions', done => {
-//
-// });
+test('error propagation of requests', done => {
+
+    const node1 = bind(uuid());
+    const node2 = bind(uuid());
+
+    node1.handleRequests("x", msg => {
+        return throwError("rawr");
+    });
+
+    node2.request(node1.address(), "x").subscribe(next => {
+
+    }, error => {
+        expect(error).toEqual("rawr");
+        done();
+    }, () => {
+
+    })
+
+});
+
+test('completion propagation of requests', done => {
+
+    const node1 = bind(uuid());
+    const node2 = bind(uuid());
+
+    node1.handleRequests("x", msg => {
+        return of(1);
+    });
+
+    const values = [];
+
+    node2.request(node1.address(), "x").subscribe(next => {
+        values.push(next);
+    }, error => {
+
+    }, () => {
+        expect(values[0]).toEqual(1);
+        done();
+    })
+
+});
+
+test('error propagation of subscriptions', done => {
+
+    const node1 = bind(uuid());
+    const node2 = bind(uuid());
+
+    node1.handleSubscriptions("x", msg => {
+        return throwError("rawr");
+    });
+
+    node2.subscription(node1.address(), "x").subscribe(next => {
+
+    }, error => {
+        expect(error).toEqual("rawr");
+        done();
+    }, () => {
+
+    })
+
+});
+
+test('completion propagation of subscriptions', done => {
+
+    const node1 = bind(uuid());
+    const node2 = bind(uuid());
+
+    node1.handleSubscriptions("x", msg => {
+        return fromArray([1, 2, 3]);
+    });
+
+    const values = [];
+
+    node2.subscription(node1.address(), "x").subscribe(next => {
+        values.push(next);
+    }, error => {
+
+    }, () => {
+        expect(values).toEqual([1, 2, 3]);
+        done();
+    })
+
+});
+
+
+test('larger networks', done => {
+
+    const maxSize = 16;
+    const minSize = 8;
+    const nodes: Socket[] = [];
+
+    const realSize = Math.floor(Math.random() * (maxSize - minSize)) + minSize;
+
+    for (let i = 0; i < realSize; i++) {
+        const socket = bind(i + "_HUGE");
+        socket.handleRequests("WHOAREYOU", msg => {
+            return of(i);
+        });
+        nodes.push(socket);
+    }
+
+    const observables = [];
+
+    for (let i = 0; i < nodes.length; i++) {
+        const me = nodes[i];
+
+        let peer = i;
+        do {
+            peer = Math.max(Math.floor(Math.random() * realSize) - 1, 0);
+        } while (peer === i);
+
+        const randomPeer = nodes[peer];
+        observables.push(me.request(randomPeer.address(), "WHOAREYOU"));
+    }
+
+    expect(observables.length).toBeGreaterThan(1);
+
+
+    nodes[0].discover().subscribe(net => {
+        console.log(net);
+    });
+
+    setTimeout(() => done(), 5000);
+
+
+});

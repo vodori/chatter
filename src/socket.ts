@@ -26,9 +26,9 @@ export class ChatterSocket implements Socket {
     peers: { [s: string]: { [s: string]: (msg: NetPacket) => void } };
     openConsumers: { [s: string]: Observer<AppPacket> };
 
-    constructor(private address: string, private settings: Settings) {
+    constructor(private _address: string, private settings: Settings) {
         const net = {};
-        net[address] = [];
+        net[_address] = [];
         this.network = new BehaviorSubject(net);
         this.sourceBuffer = {};
         this.destinationPushBuffer = {};
@@ -42,6 +42,10 @@ export class ChatterSocket implements Socket {
         this.peers = {};
     }
 
+    address(): string {
+        return this._address;
+    }
+
     broadcastPush(key: string, message: any = {}): void {
         const transaction = uuid();
 
@@ -49,13 +53,13 @@ export class ChatterSocket implements Socket {
             header: {
                 id: uuid(),
                 protocol: NetProto.BROADCAST,
-                source: this.address
+                source: this._address
             },
             body: {
                 header: {
                     key: key,
                     protocol: AppProto.PUSH,
-                    source: this.address,
+                    source: this._address,
                     transaction: transaction,
                 },
                 body: message
@@ -84,7 +88,7 @@ export class ChatterSocket implements Socket {
             }
         }
 
-        delete sockets[this.address];
+        delete sockets[this._address];
     }
 
     discover(): Observable<Network> {
@@ -124,7 +128,7 @@ export class ChatterSocket implements Socket {
             header: {
                 key: key,
                 protocol: AppProto.PUSH,
-                source: this.address,
+                source: this._address,
                 target: address,
                 transaction: transaction,
             },
@@ -142,7 +146,7 @@ export class ChatterSocket implements Socket {
                 header: {
                     key: key,
                     protocol: AppProto.REQUEST,
-                    source: this.address,
+                    source: this._address,
                     target: address,
                     transaction: transaction,
                 },
@@ -168,7 +172,7 @@ export class ChatterSocket implements Socket {
                 header: {
                     key: key,
                     protocol: AppProto.SUBSCRIPTION,
-                    source: this.address,
+                    source: this._address,
                     target: address,
                     transaction: transaction,
                 },
@@ -230,7 +234,7 @@ export class ChatterSocket implements Socket {
                         next: true,
                         error: false,
                         complete: false,
-                        source: this.address,
+                        source: this._address,
                         target: message.body.header.source
                     },
                     body: response
@@ -244,7 +248,7 @@ export class ChatterSocket implements Socket {
                         next: false,
                         error: true,
                         complete: false,
-                        source: this.address,
+                        source: this._address,
                         target: message.body.header.source
                     },
                     body: error
@@ -258,7 +262,7 @@ export class ChatterSocket implements Socket {
                         next: false,
                         error: false,
                         complete: true,
-                        source: this.address,
+                        source: this._address,
                         target: message.body.header.source
                     },
                     body: null
@@ -313,7 +317,7 @@ export class ChatterSocket implements Socket {
     broadcastInboundMessage(message: NetPacket) {
         const newHeader = Object.assign({}, message.header, {
             id: uuid(),
-            source: this.address
+            source: this._address
         });
         const newPacket = Object.assign({}, message, {header: newHeader});
         this.broadcast(newPacket);
@@ -356,7 +360,7 @@ export class ChatterSocket implements Socket {
 
 
     receiveIncomingMessage(message: NetPacket) {
-        if (message.body.header.target === this.address || message.header.protocol === NetProto.BROADCAST) {
+        if (message.body.header.target === this._address || message.header.protocol === NetProto.BROADCAST) {
             if (!this.consumeInboundMessage(message)) {
                 if (!this.handleInboundMessage(message)) {
                     if (message.header.protocol === NetProto.POINT_TO_POINT) {
@@ -366,11 +370,11 @@ export class ChatterSocket implements Socket {
             }
         }
 
-        if (message.body.header.target !== this.address && message.header.protocol === NetProto.BROADCAST) {
+        if (message.body.header.target !== this._address && message.header.protocol === NetProto.BROADCAST) {
             this.broadcastInboundMessage(message);
         }
 
-        if (message.body.header.target !== this.address && message.header.protocol === NetProto.POINT_TO_POINT) {
+        if (message.body.header.target !== this._address && message.header.protocol === NetProto.POINT_TO_POINT) {
             this.forwardInboundMessage(message);
         }
     }
@@ -468,7 +472,7 @@ export class ChatterSocket implements Socket {
     send(message: AppPacket): void {
 
         const net = this.network.getValue();
-        const path = shortestPath(net, this.address, message.header.target);
+        const path = shortestPath(net, this._address, message.header.target);
 
         if (path.length >= 2) {
 
@@ -477,7 +481,7 @@ export class ChatterSocket implements Socket {
             const netPacket: NetPacket = {
                 header: {
                     id: uuid(),
-                    source: this.address,
+                    source: this._address,
                     protocol: NetProto.POINT_TO_POINT,
                     target: nextHop
                 },
@@ -517,14 +521,14 @@ export class ChatterSocket implements Socket {
 
         const network = clone(this.network.getValue());
 
-        if (peer !== this.address) {
-            if (network[this.address].indexOf(peer) === -1) {
-                network[this.address].push(peer);
+        if (peer !== this._address) {
+            if (network[this._address].indexOf(peer) === -1) {
+                network[this._address].push(peer);
             }
         }
 
         if (!network.hasOwnProperty(peer)) {
-            network[peer] = [this.address];
+            network[peer] = [this._address];
         }
 
         this.network.next(network);
@@ -576,18 +580,26 @@ export class ChatterSocket implements Socket {
         return merge(this.listenToChromeMessages(),
             this.listenToFrameMessages(),
             this.listenToLocalMessages())
-            .pipe(filter(msg => msg.header.source !== this.address),
-                filter(msg => msg.body.header.source !== this.address));
+            .pipe(filter(msg => msg.header.source !== this._address),
+                filter(msg => msg.body.header.source !== this._address));
     }
 
     listenToChromeMessages(): Observable<NetPacket> {
         return new Observable<NetPacket>(observer => {
 
-            const listener: any = (message: any, sender) => {
+            const listener: any = (message: any, sender: any) => {
                 const origin = `chrome-extension://${sender.id}`;
-                if (this.isTrustedOrigin(origin)) {
+                const cameFromBackground = !sender.tab;
+                const cameFromActiveContentScript = (sender.tab && sender.tab.active);
+                if ((cameFromBackground || cameFromActiveContentScript) && this.isTrustedOrigin(origin)) {
                     if (looksLikeValidPacket(message)) {
-                        this.registerPeer(message, `chrome::${origin}`, this.sendToChromeRuntime);
+                        this.registerPeer(message, `chrome::${origin}`, msg => {
+                            if (this.supportsTabs()) {
+                                this.sendToActiveChromeTab(msg);
+                            } else if (this.supportsRuntime()) {
+                                this.sendToChromeRuntime(msg);
+                            }
+                        });
                         observer.next(message);
                     }
                 }
@@ -642,13 +654,21 @@ export class ChatterSocket implements Socket {
     }
 
     sendToChromeRuntime(message: any): void {
-        if (_chrome && _chrome.runtime && _chrome.runtime.id && _chrome.runtime.sendMessage) {
-            _chrome.runtime.sendMessage(_chrome.runtime.id, message);
+        if (this.supportsRuntime()) {
+            _chrome.runtime.sendMessage(message);
         }
     }
 
+    supportsRuntime(): boolean {
+        return _chrome && _chrome.runtime && !!_chrome.runtime.sendMessage;
+    }
+
+    supportsTabs(): boolean {
+        return _chrome && _chrome.tabs && !!_chrome.tabs.query;
+    }
+
     sendToActiveChromeTab(message: any): void {
-        if (_chrome && _chrome.tabs && _chrome.tabs.query) {
+        if (this.supportsTabs()) {
             _chrome.tabs.query({active: true, currentWindow: true}, tabs => {
                 if (tabs.length) {
                     _chrome.tabs.sendMessage(tabs[0].id, message);

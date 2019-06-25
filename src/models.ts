@@ -68,6 +68,8 @@ export type Network = { [s: string]: string[] };
 
 export interface Socket {
 
+    address(): string;
+
     bind(): void;
 
     discover(): Observable<Network>;
