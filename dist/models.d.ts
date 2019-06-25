@@ -38,9 +38,6 @@ export interface AppPacket {
     header: AppHeader;
     body: any;
 }
-export declare type PushListener = (msg: AppPacket) => void;
-export declare type RequestListener = (msg: AppPacket) => Observable<any>;
-export declare type SubscriptionListener = (msg: AppPacket) => Observable<any>;
 export interface Settings {
     trustedOrigins?: Set<string>;
 }
@@ -53,13 +50,16 @@ export interface Socket {
     discover(): Observable<Network>;
     push(address: string, key: string, message?: any): void;
     broadcastPush(key: string, message?: any): void;
-    request(address: string, key: string, message?: any): Observable<AppPacket>;
-    broadcastRequest(key: string, message?: any): Observable<AppPacket>;
-    subscription(address: string, key: string, message?: any): Observable<AppPacket>;
-    broadcastSubscription(key: string, message?: any): Observable<AppPacket>;
-    handlePushes(key: string, callback: PushListener): void;
-    handleRequests(key: string, callback: RequestListener): void;
-    handleSubscriptions(key: string, callback: SubscriptionListener): void;
+    request(address: string, key: string, message?: any): Observable<any>;
+    requestPacket(address: string, key: string, message?: any): Observable<AppPacket>;
+    subscription(address: string, key: string, message?: any): Observable<any>;
+    subscriptionPacket(address: string, key: string, message?: any): Observable<AppPacket>;
+    handlePushesPacket(key: string, callback: (msg: AppPacket) => void): void;
+    handlePushes(key: string, callback: (msg: any) => void): void;
+    handleRequestsPacket(key: string, callback: (msg: AppPacket) => Observable<any>): void;
+    handleRequests(key: string, callback: (msg: any) => Observable<any>): void;
+    handleSubscriptionsPacket(key: string, callback: (msg: AppPacket) => Observable<any>): void;
+    handleSubscriptions(key: string, callback: (msg: any) => Observable<any>): void;
     unhandlePushes(key: string): void;
     unhandleRequests(key: string): void;
     unhandleSubscriptions(key: string): void;

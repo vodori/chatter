@@ -39,16 +39,17 @@ export declare class ChatterSocket implements Socket {
     };
     constructor(address: string, settings: Settings);
     broadcastPush(key: string, message?: any): void;
-    broadcastRequest(key: string, message?: any): Observable<AppPacket>;
-    broadcastSubscription(key: string, message?: any): Observable<AppPacket>;
     close(): void;
     discover(): Observable<Network>;
-    handlePushes(key: string, callback: (msg: AppPacket) => void): void;
-    handleRequests(key: string, callback: (msg: AppPacket) => Observable<any>): void;
-    handleSubscriptions(key: string, callback: (msg: AppPacket) => Observable<any>): void;
+    handlePushes(key: string, callback: (msg: any) => void): void;
+    handleRequests(key: string, callback: (msg: any) => Observable<any>): void;
+    handleSubscriptions(key: string, callback: (msg: any) => Observable<any>): void;
+    handlePushesPacket(key: string, callback: (msg: AppPacket) => void): void;
+    handleRequestsPacket(key: string, callback: (msg: AppPacket) => Observable<any>): void;
+    handleSubscriptionsPacket(key: string, callback: (msg: AppPacket) => Observable<any>): void;
     push(address: string, key: string, message?: any): void;
-    request(address: string, key: string, message?: any): Observable<AppPacket>;
-    subscription(address: string, key: string, message?: any): Observable<AppPacket>;
+    requestPacket(address: string, key: string, message?: any): Observable<AppPacket>;
+    subscriptionPacket(address: string, key: string, message?: any): Observable<AppPacket>;
     unhandlePushes(key: string): void;
     unhandleRequests(key: string): void;
     unhandleSubscriptions(key: string): void;
@@ -68,6 +69,7 @@ export declare class ChatterSocket implements Socket {
     forwardInboundMessage(message: NetPacket): void;
     receiveIncomingMessage(message: NetPacket): void;
     bind(): void;
+    monkeyPatchObservableSubscribe(transaction: any, observable: Observable<any>): Observable<any>;
     send(message: AppPacket): void;
     broadcast(message: NetPacket): void;
     isTrustedOrigin(origin: string): boolean;
@@ -81,5 +83,7 @@ export declare class ChatterSocket implements Socket {
     sendToChildIframes(message: any): void;
     sendToChromeRuntime(message: any): void;
     sendToActiveChromeTab(message: any): void;
+    request(address: string, key: string, message?: any): Observable<any>;
+    subscription(address: string, key: string, message?: any): Observable<any>;
 }
 export declare function bind(name: string, settings?: Settings): Socket;
