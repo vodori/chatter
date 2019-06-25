@@ -1,2 +1,2 @@
-export {bind} from "./socket2";
+export {bind} from "./socket";
 export {Socket, Settings} from "./models";

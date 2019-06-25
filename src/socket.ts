@@ -42,7 +42,7 @@ export class ChatterSocket implements Socket {
         this.peers = {};
     }
 
-    broadcastPush(key: string, message?: any): void {
+    broadcastPush(key: string, message: any = {}): void {
         const transaction = uuid();
 
         this.broadcast({
@@ -63,7 +63,7 @@ export class ChatterSocket implements Socket {
         });
     }
 
-    broadcastRequest(key: string, message?: any): Observable<AppPacket> {
+    broadcastRequest(key: string, message: any = {}): Observable<AppPacket> {
         return new Observable(observer => {
 
             const transaction = uuid();
@@ -165,7 +165,7 @@ export class ChatterSocket implements Socket {
         this.processSubscriptionBuffer(key);
     }
 
-    push(address: string, key: string, message?: any): void {
+    push(address: string, key: string, message: any = {}): void {
         const transaction = uuid();
         this.send({
             header: {
@@ -179,7 +179,7 @@ export class ChatterSocket implements Socket {
         });
     }
 
-    request(address: string, key: string, message?: any): Observable<AppPacket> {
+    request(address: string, key: string, message: any = {}): Observable<AppPacket> {
         const transaction = uuid();
 
         const observable = new Observable(observer => {
@@ -229,7 +229,7 @@ export class ChatterSocket implements Socket {
         return <any>observable;
     }
 
-    subscription(address: string, key: string, message?: any): Observable<AppPacket> {
+    subscription(address: string, key: string, message: any = {}): Observable<AppPacket> {
         return new Observable(observer => {
             const transaction = uuid();
             this.openConsumers[transaction] = observer;

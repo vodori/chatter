@@ -1,8 +1,7 @@
 import {bind} from "../src";
 import {combineLatest, interval, of} from "rxjs";
-import {bufferCount, tap} from "rxjs/operators";
+import {tap} from "rxjs/operators";
 import {fromArray} from "rxjs/internal/observable/fromArray";
-import {AppPacket} from "../src/models";
 
 
 test('automatic discovery', done => {
@@ -161,67 +160,6 @@ test('subscriptions buffer until the peer handler is available', done => {
 
     node14.handleSubscriptions("m1", msg => {
         return of(msg.body + 1);
-    });
-
-});
-
-test('broadcast requests solicit the entire network', done => {
-    const hub = bind("hub1");
-    const x1 = bind("x11");
-    const x2 = bind("x21");
-
-    x1.handleRequests("moon", x => {
-        return of(x.body + 1);
-    });
-
-    x2.handleRequests("moon", x => {
-        return of(x.body + 2);
-    });
-
-    hub.broadcastRequest("moon", 1).pipe(bufferCount(3)).subscribe(response => {
-        expect(response.length).toEqual(3);
-        hub.close();
-        x1.close();
-        x2.close();
-        bind('x31').close();
-        done();
-    });
-
-    const x3 = bind("x31");
-
-    x3.handleRequests("moon", x => {
-        return of(x.body + 3);
-    });
-
-});
-
-
-test('broadcast subscriptions solicit the entire network', done => {
-    const hub = bind("hub2");
-    const x1 = bind("x12");
-    const x2 = bind("x22");
-
-    x1.handleSubscriptions("moon", x => {
-        return of(x.body + 1);
-    });
-
-    x2.handleSubscriptions("moon", x => {
-        return of(x.body + 2);
-    });
-
-    hub.broadcastSubscription("moon", 1).pipe(bufferCount(3)).subscribe(response => {
-        expect(response.length).toEqual(3);
-        hub.close();
-        x1.close();
-        x2.close();
-        bind('x32').close();
-        done();
-    });
-
-    const x3 = bind("x32");
-
-    x3.handleSubscriptions("moon", x => {
-        return of(x.body + 3);
     });
 
 });
