@@ -2,6 +2,8 @@ import {bind} from "../src";
 import {combineLatest, interval, of} from "rxjs";
 import {bufferCount, tap} from "rxjs/operators";
 import {fromArray} from "rxjs/internal/observable/fromArray";
+import {AppPacket} from "../src/models";
+
 
 test('automatic discovery', done => {
 
@@ -10,6 +12,8 @@ test('automatic discovery', done => {
 
     combineLatest([x1.discover(), x2.discover()]).subscribe(([x1Net, x2Net]) => {
         expect(x1Net).toEqual(x2Net);
+        x1.close();
+        x2.close();
         done();
     });
 
@@ -40,7 +44,7 @@ test('requests get sent and responses returned', done => {
     });
 
     b4.request("node3", "m1", 1).subscribe(response => {
-        expect(response).toEqual(2);
+        expect(response.body).toEqual(2);
         b3.close();
         b4.close();
         done();
@@ -75,7 +79,6 @@ test('only ever receive a single response', done => {
         b6.close();
         done();
     }, 100)
-
 });
 
 test('producers stop when subscriptions are unsubscribed', done => {
@@ -105,7 +108,7 @@ test('producers stop when subscriptions are unsubscribed', done => {
         b7.close();
         b8.close();
         done();
-    }, 100)
+    }, 500)
 
 });
 

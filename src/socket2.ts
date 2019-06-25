@@ -1,14 +1,27 @@
 import {_chrome, _document, _localMessageBus, _window, AppPacket, AppProto, defaultSettings, NetPacket, NetProto, Network, Settings, Socket} from "./models";
 import {BehaviorSubject, merge, Observable, Observer, Subscription} from "rxjs";
 import {clone, deepEquals, looksLikeValidPacket, mergeNetworks, uuid} from "./utils";
-import {distinctUntilChanged, filter} from "rxjs/operators";
+import {distinctUntilChanged, filter, first} from "rxjs/operators";
 import {shortestPath} from "./topo";
+
+const CHATTER_UNSUBSCRIBE = "_chatter_Unsubscribe";
+const CHATTER_DISCOVERY = "_chatter_NETWORK";
+
+
+const sockets: {[s:string]: Socket} = {};
 
 export class ChatterSocket implements Socket {
 
     openProducers: { [s: string]: Subscription };
     allSubscriptions: Subscription;
     network: BehaviorSubject<Network>;
+
+    sourceBuffer: { [s: string]: AppPacket[] };
+    destinationPushBuffer: { [s: string]: NetPacket[] };
+    destinationRequestBuffer: { [s: string]: NetPacket[] };
+    destinationSubscriptionBuffer: { [s: string]: NetPacket[] };
+    pushHandlers: { [s: string]: (msg: AppPacket) => void };
+    requestHandlers: { [s: string]: (msg: AppPacket) => Observable<any> };
     subscriptionHandlers: { [s: string]: (msg: AppPacket) => Observable<any> };
     peers: { [s: string]: { [s: string]: (msg: NetPacket) => void } };
     openConsumers: { [s: string]: Observer<AppPacket> };
@@ -17,17 +30,67 @@ export class ChatterSocket implements Socket {
         const net = {};
         net[address] = [];
         this.network = new BehaviorSubject(net);
+        this.sourceBuffer = {};
+        this.destinationPushBuffer = {};
+        this.destinationRequestBuffer = {};
+        this.destinationSubscriptionBuffer = {};
         this.subscriptionHandlers = {};
+        this.requestHandlers = {};
+        this.pushHandlers = {};
         this.openConsumers = {};
         this.openProducers = {};
         this.peers = {};
     }
 
     broadcastPush(key: string, message?: any): void {
+        const transaction = uuid();
+
+        this.broadcast({
+            header: {
+                id: uuid(),
+                protocol: NetProto.BROADCAST,
+                source: this.address
+            },
+            body: {
+                header: {
+                    key: key,
+                    protocol: AppProto.PUSH,
+                    source: this.address,
+                    transaction: transaction,
+                },
+                body: message
+            }
+        });
     }
 
     broadcastRequest(key: string, message?: any): Observable<AppPacket> {
-        return undefined;
+        return new Observable(observer => {
+
+            const transaction = uuid();
+            this.openConsumers[transaction] = observer;
+
+            this.broadcast({
+                header: {
+                    id: uuid(),
+                    protocol: NetProto.BROADCAST,
+                    source: this.address
+                },
+                body: {
+                    header: {
+                        key: key,
+                        protocol: AppProto.REQUEST,
+                        source: this.address,
+                        transaction: transaction,
+                    },
+                    body: message
+                }
+            });
+
+            return () => {
+                delete this.openConsumers[transaction];
+                this.broadcastPush(CHATTER_UNSUBSCRIBE, {transaction: transaction});
+            }
+        });
     }
 
     broadcastSubscription(key: string, message: any = {}): Observable<AppPacket> {
@@ -54,15 +117,33 @@ export class ChatterSocket implements Socket {
             });
 
             return () => {
-                this.broadcastPush("_chatter_Unsubscribe", {transaction: transaction});
+                delete this.openConsumers[transaction];
+                this.broadcastPush(CHATTER_UNSUBSCRIBE, {transaction: transaction});
             }
         });
     }
 
     close(): void {
+
+        this.network.complete();
+
         if (this.allSubscriptions) {
             this.allSubscriptions.unsubscribe();
         }
+
+        for (let k in this.openProducers) {
+            const producer = this.openProducers[k];
+            producer.unsubscribe();
+        }
+
+        for (let k in this.openConsumers) {
+            const consumer = this.openConsumers[k];
+            if (!(<any>consumer).successInProgress) {
+                consumer.error({message: "Socket closed!"});
+            }
+        }
+
+        delete sockets[this.address];
     }
 
     discover(): Observable<Network> {
@@ -70,51 +151,132 @@ export class ChatterSocket implements Socket {
     }
 
     handlePushes(key: string, callback: (msg: AppPacket) => void): void {
-
+        this.pushHandlers[key] = callback;
+        this.processPushBuffer(key);
     }
 
     handleRequests(key: string, callback: (msg: AppPacket) => Observable<any>): void {
-
+        this.requestHandlers[key] = msg => callback(msg).pipe(first());
+        this.processRequestBuffer(key);
     }
 
     handleSubscriptions(key: string, callback: (msg: AppPacket) => Observable<any>): void {
         this.subscriptionHandlers[key] = callback;
+        this.processSubscriptionBuffer(key);
     }
 
     push(address: string, key: string, message?: any): void {
-
+        const transaction = uuid();
+        this.send({
+            header: {
+                key: key,
+                protocol: AppProto.PUSH,
+                source: this.address,
+                target: address,
+                transaction: transaction,
+            },
+            body: message
+        });
     }
 
     request(address: string, key: string, message?: any): Observable<AppPacket> {
-        return undefined;
+        const transaction = uuid();
+
+        const observable = new Observable(observer => {
+            this.openConsumers[transaction] = observer;
+
+            this.send({
+                header: {
+                    key: key,
+                    protocol: AppProto.REQUEST,
+                    source: this.address,
+                    target: address,
+                    transaction: transaction,
+                },
+                body: message
+            });
+
+            return () => {
+                delete this.openConsumers[transaction];
+                this.push(address, CHATTER_UNSUBSCRIBE, {transaction: transaction});
+            }
+        });
+
+        const originalSubscribe = observable.subscribe.bind(observable);
+        const modifiedSubscribe = (originalNext, error, complete) => {
+            const args = [];
+            if (originalNext) {
+                const modifiedNext = value => {
+                    const consumer = this.openConsumers[transaction];
+                    (<any>consumer).successInProgress = true;
+                    const returnValue = originalNext(value);
+                    (<any>consumer).successInProgress = false;
+                    return returnValue;
+                };
+                args.push(modifiedNext.bind(observable));
+            }
+            if (error) {
+                args.push(error);
+            }
+            if (complete) {
+                args.push(complete);
+            }
+            return originalSubscribe.apply(observable, args);
+        };
+
+        observable.subscribe = <any>modifiedSubscribe;
+
+        return <any>observable;
     }
 
     subscription(address: string, key: string, message?: any): Observable<AppPacket> {
-        return undefined;
+        return new Observable(observer => {
+            const transaction = uuid();
+            this.openConsumers[transaction] = observer;
+
+            this.send({
+                header: {
+                    key: key,
+                    protocol: AppProto.SUBSCRIPTION,
+                    source: this.address,
+                    target: address,
+                    transaction: transaction,
+                },
+                body: message
+            });
+
+            return () => {
+                delete this.openConsumers[transaction];
+                this.push(address, CHATTER_UNSUBSCRIBE, {transaction: transaction});
+            }
+        });
     }
 
     unhandlePushes(key: string): void {
+        delete this.pushHandlers[key];
     }
 
     unhandleRequests(key: string): void {
+        delete this.requestHandlers[key];
     }
 
     unhandleSubscriptions(key: string): void {
-
+        delete this.subscriptionHandlers[key];
     }
 
-    handleInboundPushMessage(message: NetPacket) {
-
+    handleInboundPushMessage(message: NetPacket): boolean {
+        if (this.pushHandlers[message.body.header.key]) {
+            const handler = this.pushHandlers[message.body.header.key];
+            handler(message.body);
+            return true;
+        } else {
+            return false;
+        }
     }
 
-    handleInboundRequestMessage(message: NetPacket) {
-
-    }
-
-    handleInboundSubscriptionMessage(message: NetPacket) {
-
-        if (this.subscriptionHandlers.hasOwnProperty(message.body.header.key)) {
-            const handler = this.subscriptionHandlers[message.body.header.key];
+    handleIncomingResponsiveMessage(message: NetPacket, handlers: { [s: string]: (msg: AppPacket) => Observable<any> }): boolean {
+        if (handlers.hasOwnProperty(message.body.header.key)) {
+            const handler = handlers[message.body.header.key];
 
             const responseStream = (() => {
                 try {
@@ -128,93 +290,69 @@ export class ChatterSocket implements Socket {
             })();
 
             this.openProducers[message.body.header.transaction] = responseStream.subscribe(response => {
-
-                const net = this.network.getValue();
-                const path = shortestPath(net, this.address, message.body.header.source);
-                const nextHop = path[1];
-                const outboundPacket = {
-                    header: {
-                        id: uuid(),
-                        protocol: NetProto.POINT_TO_POINT,
-                        source: this.address,
-                        target: nextHop
-                    },
-                    body: {
-                        header: {
-                            transaction: message.body.header.transaction,
-                            key: message.body.header.key,
-                            protocol: message.body.header.protocol,
-                            next: true,
-                            error: false,
-                            complete: false,
-                            source: this.address,
-                            target: message.body.header.source
-                        },
-                        body: response
-                    }
-                };
-
-                this.send(outboundPacket);
-            }, error => {
-                const net = this.network.getValue();
-                const path = shortestPath(net, this.address, message.body.header.source);
-                const nextHop = path[1];
                 this.send({
                     header: {
-                        id: uuid(),
-                        protocol: NetProto.POINT_TO_POINT,
+                        transaction: message.body.header.transaction,
+                        key: message.body.header.key,
+                        protocol: message.body.header.protocol,
+                        next: true,
+                        error: false,
+                        complete: false,
                         source: this.address,
-                        target: nextHop
+                        target: message.body.header.source
                     },
-                    body: {
-                        header: {
-                            transaction: message.body.header.transaction,
-                            key: message.body.header.key,
-                            protocol: message.body.header.protocol,
-                            next: false,
-                            error: true,
-                            complete: false,
-                            source: this.address,
-                            target: message.body.header.source
-                        },
-                        body: error
-                    }
+                    body: response
+                });
+            }, error => {
+                this.send({
+                    header: {
+                        transaction: message.body.header.transaction,
+                        key: message.body.header.key,
+                        protocol: message.body.header.protocol,
+                        next: false,
+                        error: true,
+                        complete: false,
+                        source: this.address,
+                        target: message.body.header.source
+                    },
+                    body: error
                 })
             }, () => {
-                const net = this.network.getValue();
-                const path = shortestPath(net, this.address, message.body.header.source);
-                const nextHop = path[1];
                 this.send({
                     header: {
-                        id: uuid(),
-                        protocol: NetProto.POINT_TO_POINT,
+                        transaction: message.body.header.transaction,
+                        key: message.body.header.key,
+                        protocol: message.body.header.protocol,
+                        next: false,
+                        error: false,
+                        complete: true,
                         source: this.address,
-                        target: nextHop
+                        target: message.body.header.source
                     },
-                    body: {
-                        header: {
-                            transaction: message.body.header.transaction,
-                            key: message.body.header.key,
-                            protocol: message.body.header.protocol,
-                            next: false,
-                            error: false,
-                            complete: true,
-                            source: this.address,
-                            target: message.body.header.source
-                        },
-                        body: null
-                    }
-                })
+                    body: null
+                });
             });
+
+            return true;
         }
+
+        return false;
     }
 
-    handleInboundMessage(message: NetPacket) {
+    handleInboundRequestMessage(message: NetPacket): boolean {
+        return this.handleIncomingResponsiveMessage(message, this.requestHandlers);
+    }
+
+    handleInboundSubscriptionMessage(message: NetPacket): boolean {
+        return this.handleIncomingResponsiveMessage(message, this.subscriptionHandlers);
+    }
+
+    handleInboundMessage(message: NetPacket): boolean {
         const dispatch = {};
         dispatch[AppProto.SUBSCRIPTION] = this.handleInboundSubscriptionMessage.bind(this);
         dispatch[AppProto.REQUEST] = this.handleInboundRequestMessage.bind(this);
         dispatch[AppProto.PUSH] = this.handleInboundPushMessage.bind(this);
-        dispatch[message.body.header.protocol](message);
+        return dispatch[message.body.header.protocol](message);
     }
 
     consumeInboundMessage(message: NetPacket): boolean {
@@ -249,36 +387,75 @@ export class ChatterSocket implements Socket {
         this.broadcast(newPacket);
     }
 
+    processPushBuffer(key:string) {
+        const messages = this.destinationPushBuffer[key] || [];
+        messages.forEach(msg => this.receiveIncomingMessage(msg));
+        delete this.destinationPushBuffer[key];
+    }
+
+    processRequestBuffer(key: string) {
+        const messages = this.destinationRequestBuffer[key] || [];
+        messages.forEach(msg => this.receiveIncomingMessage(msg));
+        delete this.destinationRequestBuffer[key];
+    }
+
+    processSubscriptionBuffer(key: string) {
+        const messages = this.destinationSubscriptionBuffer[key] || [];
+        messages.forEach(msg => this.receiveIncomingMessage(msg));
+        delete this.destinationSubscriptionBuffer[key];
+    }
+
+    bufferInboundMessage(message: NetPacket) {
+        if (message.body.header.protocol === AppProto.PUSH) {
+            this.destinationPushBuffer[message.body.header.key] = this.destinationPushBuffer[message.body.header.key] || [];
+            this.destinationPushBuffer[message.body.header.key].push(message);
+        } else if (message.body.header.protocol === AppProto.REQUEST) {
+            this.destinationRequestBuffer[message.body.header.key] = this.destinationRequestBuffer[message.body.header.key] || [];
+            this.destinationRequestBuffer[message.body.header.key].push(message);
+        } else if (message.body.header.protocol === AppProto.SUBSCRIPTION) {
+            this.destinationSubscriptionBuffer[message.body.header.key] = this.destinationSubscriptionBuffer[message.body.header.key] || [];
+            this.destinationSubscriptionBuffer[message.body.header.key].push(message);
+        }
+    }
+
     forwardInboundMessage(message: NetPacket) {
-        const net = this.network.getValue();
-        const source = this.address;
-        const target = message.body.header.target;
-        const path = shortestPath(net, source, target);
-        const nextHop = path[1];
-        this.send({
-            header: {
-                id: uuid(),
-                protocol: NetProto.POINT_TO_POINT,
-                source: this.address,
-                target: nextHop
-            },
-            body: message.body
-        });
+        this.send(message.body);
+    }
+
+
+    receiveIncomingMessage(message: NetPacket) {
+        if (message.body.header.target === this.address || message.header.protocol === NetProto.BROADCAST) {
+            if (!this.consumeInboundMessage(message)) {
+                if (!this.handleInboundMessage(message)) {
+                    if(message.header.protocol === NetProto.POINT_TO_POINT) {
+                        this.bufferInboundMessage(message);
+                    }
+                }
+            }
+        }
+
+        if (message.body.header.target !== this.address && message.header.protocol === NetProto.BROADCAST) {
+            this.broadcastInboundMessage(message);
+        }
+
+        if (message.body.header.target !== this.address && message.header.protocol === NetProto.POINT_TO_POINT) {
+            this.forwardInboundMessage(message);
+        }
     }
 
     bind(): void {
 
         this.allSubscriptions = new Subscription();
 
-        this.handleSubscriptions("_chatter_NETWORK", (msg: AppPacket) => {
-            // this.allSubscriptions.add(this.subscription("_chatter_NETWORK", msg.header.source).subscribe(network => {
+        this.handleSubscriptions(CHATTER_DISCOVERY, (msg: AppPacket) => {
+            // this.allSubscriptions.add(this.subscription(msg.header.source, CHATTER_DISCOVERY).subscribe(network => {
             //     const updatedNetwork = mergeNetworks(clone(this.network.getValue()), network.body);
             //     this.network.next(updatedNetwork);
             // }));
             return this.network.pipe(distinctUntilChanged(deepEquals));
         });
 
-        this.handlePushes("_chatter_Unsubscribe", (msg: AppPacket) => {
+        this.handlePushes(CHATTER_UNSUBSCRIBE, (msg: AppPacket) => {
             const transaction = msg.body.transaction;
             if (this.openProducers[transaction]) {
                 this.openProducers[transaction].unsubscribe();
@@ -286,42 +463,52 @@ export class ChatterSocket implements Socket {
             }
         });
 
-        this.allSubscriptions.add(this.broadcastSubscription("_chatter_NETWORK").subscribe(response => {
-            console.log("received a response!!!!");
+        this.allSubscriptions.add(this.incomingMessages().subscribe(msg => this.receiveIncomingMessage(msg)));
+
+        this.allSubscriptions.add(this.broadcastSubscription(CHATTER_DISCOVERY).subscribe(response => {
             const updatedNetwork = mergeNetworks(clone(this.network.getValue()), response.body);
             this.network.next(updatedNetwork);
         }));
 
-        this.allSubscriptions.add(this.incomingMessages().subscribe((message: NetPacket) => {
-
-            if (message.body.header.target === this.address || message.header.protocol === NetProto.BROADCAST) {
-                if (!this.consumeInboundMessage(message)) {
-                    this.handleInboundMessage(message);
+        this.allSubscriptions.add(this.network.pipe(distinctUntilChanged(deepEquals)).subscribe(changedNetwork => {
+            for (let k in this.sourceBuffer) {
+                if (changedNetwork.hasOwnProperty(k)) {
+                    const messages = clone(this.sourceBuffer[k]);
+                    messages.forEach(msg => this.send(msg));
+                    delete this.sourceBuffer[k];
                 }
             }
-
-            if (message.body.header.target !== this.address && message.header.protocol === NetProto.BROADCAST) {
-                this.broadcastInboundMessage(message);
-            }
-
-            if (message.body.header.target !== this.address && message.header.protocol === NetProto.POINT_TO_POINT) {
-                this.forwardInboundMessage(message);
-            }
-
         }));
-
     }
 
 
-    send(message: NetPacket): void {
-        if (!this.peers[message.header.target]) {
-            console.error(`Your target is not one of my peers`, message);
-            throw new Error(`Your target is not one of my peers ${JSON.stringify(message)}`);
-        }
+    send(message: AppPacket): void {
 
-        for (let k in this.peers[message.header.target]) {
-            const edge = this.peers[message.header.target][k];
-            edge(message);
+        const net = this.network.getValue();
+        const path = shortestPath(net, this.address, message.header.target);
+
+        if (path.length >= 2) {
+
+            const nextHop = path[1];
+
+            const netPacket: NetPacket = {
+                header: {
+                    id: uuid(),
+                    source: this.address,
+                    protocol: NetProto.POINT_TO_POINT,
+                    target: nextHop
+                },
+                body: message
+            };
+
+            for (let k in this.peers[message.header.target]) {
+                const edge = this.peers[message.header.target][k];
+                edge(netPacket);
+            }
+
+        } else {
+            this.sourceBuffer[message.header.target] = this.sourceBuffer[message.header.target] || [];
+            this.sourceBuffer[message.header.target].push(message);
         }
     }
 
@@ -347,14 +534,14 @@ export class ChatterSocket implements Socket {
 
         const network = clone(this.network.getValue());
 
-        if(peer !== this.address) {
+        if (peer !== this.address) {
             if (network[this.address].indexOf(peer) === -1) {
                 network[this.address].push(peer);
             }
         }
 
         if (!network.hasOwnProperty(peer)) {
-            network[peer] = [];
+            network[peer] = [this.address];
         }
 
         this.network.next(network);
@@ -490,9 +677,13 @@ export class ChatterSocket implements Socket {
 
 }
 
-
 export function bind(name: string, settings: Settings = defaultSettings()): Socket {
-    const socket = new ChatterSocket(name, settings);
-    socket.bind();
-    return socket;
+    if(sockets[name]) {
+        return sockets[name];
+    } else {
+        const socket = new ChatterSocket(name, settings);
+        sockets[name] = socket;
+        socket.bind();
+        return socket;
+    }
 }
