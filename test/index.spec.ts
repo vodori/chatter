@@ -24,7 +24,7 @@ test('pushes get sent and handled', done => {
     const b2 = bind("node2");
 
     b1.handlePushes("m1", msg => {
-        expect(msg.body).toEqual("hello");
+        expect(msg).toEqual("hello");
         b1.close();
         b2.close();
         done()
@@ -39,11 +39,11 @@ test('requests get sent and responses returned', done => {
     const b4 = bind("node4");
 
     b3.handleRequests("m1", msg => {
-        return of(msg.body + 1);
+        return of(msg + 1);
     });
 
     b4.request("node3", "m1", 1).subscribe(response => {
-        expect(response.body).toEqual(2);
+        expect(response).toEqual(2);
         b3.close();
         b4.close();
         done();
@@ -60,11 +60,11 @@ test('only ever receive a single response', done => {
     const received = [];
 
     b5.handleRequests("m1", msg => {
-        return fromArray([msg.body + 1, msg.body + 2, msg.body + 3]).pipe(tap(m => sent.push(m)));
+        return fromArray([msg + 1, msg + 2, msg + 3]).pipe(tap(m => sent.push(m)));
     });
 
     const sub = b6.request("node5", "m1", 1).subscribe(response => {
-        received.push(response.body);
+        received.push(response);
     });
 
     setTimeout(() => {
@@ -93,7 +93,7 @@ test('producers stop when subscriptions are unsubscribed', done => {
     });
 
     const sub = b8.subscription("node7", "m1", 1).subscribe(response => {
-        received.push(response.body);
+        received.push(response);
     });
 
     setTimeout(() => {
@@ -119,7 +119,7 @@ test('pushes buffer until the peer handler is available', done => {
     const node10 = bind("node10");
 
     node10.handlePushes("m1", msg => {
-        expect(msg.body).toEqual("TEST");
+        expect(msg).toEqual("TEST");
         node9.close();
         node10.close();
         done();
@@ -131,7 +131,7 @@ test('requests buffer until the peer handler is available', done => {
     const node11 = bind('node11');
 
     node11.request("node12", "m1", 1).subscribe(result => {
-        expect(result.body).toEqual(2);
+        expect(result).toEqual(2);
         node11.close();
         bind('node12').close();
         done();
@@ -140,7 +140,7 @@ test('requests buffer until the peer handler is available', done => {
     const node12 = bind("node12");
 
     node12.handleRequests("m1", msg => {
-        return of(msg.body + 1);
+        return of(msg + 1);
     });
 
 });
@@ -150,7 +150,7 @@ test('subscriptions buffer until the peer handler is available', done => {
     const node13 = bind('node13');
 
     node13.subscription("node14", "m1", 1).subscribe(result => {
-        expect(result.body).toEqual(2);
+        expect(result).toEqual(2);
         node13.close();
         bind('node14').close();
         done();
@@ -159,7 +159,23 @@ test('subscriptions buffer until the peer handler is available', done => {
     const node14 = bind("node14");
 
     node14.handleSubscriptions("m1", msg => {
-        return of(msg.body + 1);
+        return of(msg + 1);
     });
 
 });
+
+// test('error propagation of requests', done => {
+//
+// });
+//
+// test('completion propagation of requests', done => {
+//
+// });
+//
+// test('error propagation of subscriptions', done => {
+//
+// });
+//
+// test('completion propagation of subscriptions', done => {
+//
+// });

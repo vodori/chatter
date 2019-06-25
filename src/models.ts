@@ -56,10 +56,6 @@ export interface AppPacket {
     body: any
 }
 
-export type PushListener = (msg: AppPacket) => void;
-export type RequestListener = (msg: AppPacket) => Observable<any>;
-export type SubscriptionListener = (msg: AppPacket) => Observable<any>;
-
 export interface Settings {
     trustedOrigins?: Set<string>
 }
@@ -80,19 +76,25 @@ export interface Socket {
 
     broadcastPush(key: string, message?: any): void;
 
-    request(address: string, key: string, message?: any): Observable<AppPacket>;
+    request(address: string, key: string, message?: any): Observable<any>;
 
-    broadcastRequest(key: string, message?: any): Observable<AppPacket>;
+    requestPacket(address: string, key: string, message?: any): Observable<AppPacket>;
 
-    subscription(address: string, key: string, message?: any): Observable<AppPacket>;
+    subscription(address: string, key: string, message?: any): Observable<any>;
 
-    broadcastSubscription(key: string, message?: any): Observable<AppPacket>;
+    subscriptionPacket(address: string, key: string, message?: any): Observable<AppPacket>;
 
-    handlePushes(key: string, callback: PushListener): void;
+    handlePushesPacket(key: string, callback: (msg: AppPacket) => void): void;
 
-    handleRequests(key: string, callback: RequestListener): void;
+    handlePushes(key: string, callback: (msg: any) => void): void;
 
-    handleSubscriptions(key: string, callback: SubscriptionListener): void;
+    handleRequestsPacket(key: string, callback: (msg: AppPacket) => Observable<any>): void;
+
+    handleRequests(key: string, callback: (msg: any) => Observable<any>): void;
+
+    handleSubscriptionsPacket(key: string, callback: (msg: AppPacket) => Observable<any>): void;
+
+    handleSubscriptions(key: string, callback: (msg: any) => Observable<any>): void;
 
     unhandlePushes(key: string): void;
 

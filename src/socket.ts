@@ -1,21 +1,21 @@
 import {_chrome, _document, _localMessageBus, _window, AppPacket, AppProto, defaultSettings, NetPacket, NetProto, Network, Settings, Socket} from "./models";
 import {BehaviorSubject, merge, Observable, Observer, Subscription} from "rxjs";
 import {clone, deepEquals, looksLikeValidPacket, mergeNetworks, uuid} from "./utils";
-import {distinctUntilChanged, filter, first} from "rxjs/operators";
+import {distinctUntilChanged, filter, first, map} from "rxjs/operators";
 import {shortestPath} from "./topo";
 
-const CHATTER_UNSUBSCRIBE = "_chatter_Unsubscribe";
-const CHATTER_DISCOVERY = "_chatter_NETWORK";
+const CHATTER_UNSUBSCRIBE = "__chatterUnsubscribe";
+const CHATTER_DISCOVERY_OUT = "__chatterDiscoveryOut";
+const CHATTER_DISCOVERY_IN = "__chatterDiscoveryIn";
 
 
-const sockets: {[s:string]: Socket} = {};
+const sockets: { [s: string]: Socket } = {};
 
 export class ChatterSocket implements Socket {
 
     openProducers: { [s: string]: Subscription };
     allSubscriptions: Subscription;
     network: BehaviorSubject<Network>;
-
     sourceBuffer: { [s: string]: AppPacket[] };
     destinationPushBuffer: { [s: string]: NetPacket[] };
     destinationRequestBuffer: { [s: string]: NetPacket[] };
@@ -63,65 +63,6 @@ export class ChatterSocket implements Socket {
         });
     }
 
-    broadcastRequest(key: string, message: any = {}): Observable<AppPacket> {
-        return new Observable(observer => {
-
-            const transaction = uuid();
-            this.openConsumers[transaction] = observer;
-
-            this.broadcast({
-                header: {
-                    id: uuid(),
-                    protocol: NetProto.BROADCAST,
-                    source: this.address
-                },
-                body: {
-                    header: {
-                        key: key,
-                        protocol: AppProto.REQUEST,
-                        source: this.address,
-                        transaction: transaction,
-                    },
-                    body: message
-                }
-            });
-
-            return () => {
-                delete this.openConsumers[transaction];
-                this.broadcastPush(CHATTER_UNSUBSCRIBE, {transaction: transaction});
-            }
-        });
-    }
-
-    broadcastSubscription(key: string, message: any = {}): Observable<AppPacket> {
-        return new Observable(observer => {
-
-            const transaction = uuid();
-            this.openConsumers[transaction] = observer;
-
-            this.broadcast({
-                header: {
-                    id: uuid(),
-                    protocol: NetProto.BROADCAST,
-                    source: this.address
-                },
-                body: {
-                    header: {
-                        key: key,
-                        protocol: AppProto.SUBSCRIPTION,
-                        source: this.address,
-                        transaction: transaction,
-                    },
-                    body: message
-                }
-            });
-
-            return () => {
-                delete this.openConsumers[transaction];
-                this.broadcastPush(CHATTER_UNSUBSCRIBE, {transaction: transaction});
-            }
-        });
-    }
 
     close(): void {
 
@@ -150,17 +91,29 @@ export class ChatterSocket implements Socket {
         return this.network;
     }
 
-    handlePushes(key: string, callback: (msg: AppPacket) => void): void {
+    handlePushes(key: string, callback: (msg: any) => void): void {
+        this.handlePushesPacket(key, msg => callback(msg.body));
+    }
+
+    handleRequests(key: string, callback: (msg: any) => Observable<any>): void {
+        this.handleRequestsPacket(key, msg => callback(msg.body));
+    }
+
+    handleSubscriptions(key: string, callback: (msg: any) => Observable<any>): void {
+        this.handleSubscriptionsPacket(key, msg => callback(msg.body));
+    }
+
+    handlePushesPacket(key: string, callback: (msg: AppPacket) => void): void {
         this.pushHandlers[key] = callback;
         this.processPushBuffer(key);
     }
 
-    handleRequests(key: string, callback: (msg: AppPacket) => Observable<any>): void {
+    handleRequestsPacket(key: string, callback: (msg: AppPacket) => Observable<any>): void {
         this.requestHandlers[key] = msg => callback(msg).pipe(first());
         this.processRequestBuffer(key);
     }
 
-    handleSubscriptions(key: string, callback: (msg: AppPacket) => Observable<any>): void {
+    handleSubscriptionsPacket(key: string, callback: (msg: AppPacket) => Observable<any>): void {
         this.subscriptionHandlers[key] = callback;
         this.processSubscriptionBuffer(key);
     }
@@ -179,7 +132,7 @@ export class ChatterSocket implements Socket {
         });
     }
 
-    request(address: string, key: string, message: any = {}): Observable<AppPacket> {
+    requestPacket(address: string, key: string, message: any = {}): Observable<AppPacket> {
         const transaction = uuid();
 
         const observable = new Observable(observer => {
@@ -202,36 +155,13 @@ export class ChatterSocket implements Socket {
             }
         });
 
-        const originalSubscribe = observable.subscribe.bind(observable);
-        const modifiedSubscribe = (originalNext, error, complete) => {
-            const args = [];
-            if (originalNext) {
-                const modifiedNext = value => {
-                    const consumer = this.openConsumers[transaction];
-                    (<any>consumer).successInProgress = true;
-                    const returnValue = originalNext(value);
-                    (<any>consumer).successInProgress = false;
-                    return returnValue;
-                };
-                args.push(modifiedNext.bind(observable));
-            }
-            if (error) {
-                args.push(error);
-            }
-            if (complete) {
-                args.push(complete);
-            }
-            return originalSubscribe.apply(observable, args);
-        };
-
-        observable.subscribe = <any>modifiedSubscribe;
-
-        return <any>observable;
+        return this.monkeyPatchObservableSubscribe(transaction, observable);
     }
 
-    subscription(address: string, key: string, message: any = {}): Observable<AppPacket> {
-        return new Observable(observer => {
-            const transaction = uuid();
+    subscriptionPacket(address: string, key: string, message: any = {}): Observable<AppPacket> {
+        const transaction = uuid();
+
+        const observable = new Observable(observer => {
             this.openConsumers[transaction] = observer;
 
             this.send({
@@ -250,6 +180,8 @@ export class ChatterSocket implements Socket {
                 this.push(address, CHATTER_UNSUBSCRIBE, {transaction: transaction});
             }
         });
+
+        return this.monkeyPatchObservableSubscribe(transaction, observable);
     }
 
     unhandlePushes(key: string): void {
@@ -387,7 +319,7 @@ export class ChatterSocket implements Socket {
         this.broadcast(newPacket);
     }
 
-    processPushBuffer(key:string) {
+    processPushBuffer(key: string) {
         const messages = this.destinationPushBuffer[key] || [];
         messages.forEach(msg => this.receiveIncomingMessage(msg));
         delete this.destinationPushBuffer[key];
@@ -427,7 +359,7 @@ export class ChatterSocket implements Socket {
         if (message.body.header.target === this.address || message.header.protocol === NetProto.BROADCAST) {
             if (!this.consumeInboundMessage(message)) {
                 if (!this.handleInboundMessage(message)) {
-                    if(message.header.protocol === NetProto.POINT_TO_POINT) {
+                    if (message.header.protocol === NetProto.POINT_TO_POINT) {
                         this.bufferInboundMessage(message);
                     }
                 }
@@ -447,16 +379,18 @@ export class ChatterSocket implements Socket {
 
         this.allSubscriptions = new Subscription();
 
-        this.handleSubscriptions(CHATTER_DISCOVERY, (msg: AppPacket) => {
-            // this.allSubscriptions.add(this.subscription(msg.header.source, CHATTER_DISCOVERY).subscribe(network => {
-            //     const updatedNetwork = mergeNetworks(clone(this.network.getValue()), network.body);
-            //     this.network.next(updatedNetwork);
-            // }));
-            return this.network.pipe(distinctUntilChanged(deepEquals));
+        this.handlePushes(CHATTER_DISCOVERY_IN, msg => {
+            const current = clone(this.network.getValue());
+            const merged = mergeNetworks(current, msg.network);
+            this.network.next(merged);
         });
 
-        this.handlePushes(CHATTER_UNSUBSCRIBE, (msg: AppPacket) => {
-            const transaction = msg.body.transaction;
+        this.handlePushesPacket(CHATTER_DISCOVERY_OUT, (msg: AppPacket) => {
+            this.push(msg.header.source, CHATTER_DISCOVERY_IN, {network: this.network.getValue()});
+        });
+
+        this.handlePushes(CHATTER_UNSUBSCRIBE, (msg: any) => {
+            const transaction = msg.transaction;
             if (this.openProducers[transaction]) {
                 this.openProducers[transaction].unsubscribe();
                 delete this.openProducers[transaction];
@@ -465,10 +399,7 @@ export class ChatterSocket implements Socket {
 
         this.allSubscriptions.add(this.incomingMessages().subscribe(msg => this.receiveIncomingMessage(msg)));
 
-        this.allSubscriptions.add(this.broadcastSubscription(CHATTER_DISCOVERY).subscribe(response => {
-            const updatedNetwork = mergeNetworks(clone(this.network.getValue()), response.body);
-            this.network.next(updatedNetwork);
-        }));
+        this.broadcastPush(CHATTER_DISCOVERY_OUT, {network: this.network.getValue()});
 
         this.allSubscriptions.add(this.network.pipe(distinctUntilChanged(deepEquals)).subscribe(changedNetwork => {
             for (let k in this.sourceBuffer) {
@@ -478,7 +409,59 @@ export class ChatterSocket implements Socket {
                     delete this.sourceBuffer[k];
                 }
             }
+
+            this.broadcastPush(CHATTER_DISCOVERY_IN, {network: changedNetwork});
         }));
+    }
+
+    monkeyPatchObservableSubscribe(transaction, observable: Observable<any>): Observable<any> {
+
+        const originalSubscribe = observable.subscribe;
+
+        const modifiedSubscribe = (originalNext, error, complete) => {
+
+            if (!(typeof originalNext === 'function')) {
+                const next = originalNext.next;
+                if (next) {
+                    const modifiedNext = value => {
+                        const consumer = this.openConsumers[transaction];
+                        (<any>consumer).successInProgress = true;
+                        const returnValue = next.bind(originalNext)(value);
+                        (<any>consumer).successInProgress = false;
+                        return returnValue;
+                    };
+                    originalNext.next = modifiedNext;
+                }
+
+                return originalSubscribe.apply(observable, [originalNext]);
+            } else {
+
+                const args = [];
+
+                if (originalNext) {
+                    const modifiedNext = value => {
+                        const consumer = this.openConsumers[transaction];
+                        (<any>consumer).successInProgress = true;
+                        const returnValue = originalNext(value);
+                        (<any>consumer).successInProgress = false;
+                        return returnValue;
+                    };
+                    args.push(modifiedNext);
+                }
+                if (error) {
+                    args.push(error);
+                }
+                if (complete) {
+                    args.push(complete);
+                }
+
+                return originalSubscribe.apply(observable, args);
+            }
+        };
+
+        observable.subscribe = <any>modifiedSubscribe;
+
+        return <any>observable;
     }
 
 
@@ -674,11 +657,19 @@ export class ChatterSocket implements Socket {
         }
     }
 
+    request(address: string, key: string, message?: any): Observable<any> {
+        return this.requestPacket(address, key, message).pipe(map(msg => msg.body));
+    }
+
+    subscription(address: string, key: string, message?: any): Observable<any> {
+        return this.subscriptionPacket(address, key, message).pipe(map(msg => msg.body));
+    }
+
 
 }
 
 export function bind(name: string, settings: Settings = defaultSettings()): Socket {
-    if(sockets[name]) {
+    if (sockets[name]) {
         return sockets[name];
     } else {
         const socket = new ChatterSocket(name, settings);
