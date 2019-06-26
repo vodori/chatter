@@ -2,7 +2,8 @@ import {bind, Socket} from "../src";
 import {combineLatest, forkJoin, interval, of, throwError} from "rxjs";
 import {tap} from "rxjs/operators";
 import {fromArray} from "rxjs/internal/observable/fromArray";
-import {uuid} from "../src/utils";
+import {deepEquals, uuid} from "../src/utils";
+import {shortestPath} from "../src/topo";
 
 
 test('automatic discovery', done => {
@@ -249,45 +250,30 @@ test('completion propagation of subscriptions', done => {
 
 });
 
-
 test('larger networks', done => {
 
-    const maxSize = 16;
-    const minSize = 8;
-    const nodes: Socket[] = [];
-
-    const realSize = Math.floor(Math.random() * (maxSize - minSize)) + minSize;
-
-    for (let i = 0; i < realSize; i++) {
-        const socket = bind(i + "_HUGE");
-        socket.handleRequests("WHOAREYOU", msg => {
-            return of(i);
-        });
-        nodes.push(socket);
-    }
+    const realSize = 10;
 
     const observables = [];
 
-    for (let i = 0; i < nodes.length; i++) {
-        const me = nodes[i];
-
-        let peer = i;
-        do {
-            peer = Math.max(Math.floor(Math.random() * realSize) - 1, 0);
-        } while (peer === i);
-
-        const randomPeer = nodes[peer];
-        observables.push(me.request(randomPeer.address(), "WHOAREYOU"));
+    for (let i = 0; i < realSize; i++) {
+        const socket = bind(i + "_HUGE");
+        observables.push(socket.discover());
     }
 
-    expect(observables.length).toBeGreaterThan(1);
+    combineLatest(observables).subscribe(results => {
+        const result = <any>results.reduce((agg: any, next) => {
+            if (agg.previous === null) {
+                return {equal: true, previous: next}
+            } else {
+                return {equal: agg.equal && deepEquals(next, agg.previous), previous: next}
+            }
+        }, {equal: true, previous: null});
 
-
-    nodes[0].discover().subscribe(net => {
-        console.log(net);
+        if (result.equal) {
+            console.log(results);
+            done();
+        }
     });
-
-    setTimeout(() => done(), 5000);
-
 
 });

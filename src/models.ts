@@ -76,8 +76,6 @@ export interface Socket {
 
     push(address: string, key: string, message?: any): void;
 
-    broadcastPush(key: string, message?: any): void;
-
     request(address: string, key: string, message?: any): Observable<any>;
 
     requestPacket(address: string, key: string, message?: any): Observable<AppPacket>;

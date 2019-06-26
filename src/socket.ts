@@ -25,6 +25,7 @@ export class ChatterSocket implements Socket {
     subscriptionHandlers: { [s: string]: (msg: AppPacket) => Observable<any> };
     peers: { [s: string]: { [s: string]: (msg: NetPacket) => void } };
     openConsumers: { [s: string]: Observer<AppPacket> };
+    transactionIds: Set<string>;
 
     constructor(private _address: string, private settings: Settings) {
         const net = {};
@@ -40,6 +41,7 @@ export class ChatterSocket implements Socket {
         this.openConsumers = {};
         this.openProducers = {};
         this.peers = {};
+        this.transactionIds = new Set<string>();
     }
 
     address(): string {
@@ -292,6 +294,8 @@ export class ChatterSocket implements Socket {
     }
 
     consumeInboundMessage(message: NetPacket): boolean {
+
+
         if (this.openProducers.hasOwnProperty(message.body.header.transaction)) {
             return true;
         }
@@ -360,6 +364,11 @@ export class ChatterSocket implements Socket {
 
 
     receiveIncomingMessage(message: NetPacket) {
+
+        if (this.transactionIds.has(message.body.header.transaction)) {
+            return;
+        }
+
         if (message.body.header.target === this._address || message.header.protocol === NetProto.BROADCAST) {
             if (!this.consumeInboundMessage(message)) {
                 if (!this.handleInboundMessage(message)) {
@@ -371,7 +380,13 @@ export class ChatterSocket implements Socket {
         }
 
         if (message.body.header.target !== this._address && message.header.protocol === NetProto.BROADCAST) {
-            this.broadcastInboundMessage(message);
+            if (!this.transactionIds.has(message.body.header.transaction)) {
+                this.transactionIds.add(message.body.header.transaction);
+                this.broadcastInboundMessage(message);
+                setTimeout(() => {
+                    this.transactionIds.delete(message.body.header.transaction);
+                }, 10000);
+            }
         }
 
         if (message.body.header.target !== this._address && message.header.protocol === NetProto.POINT_TO_POINT) {

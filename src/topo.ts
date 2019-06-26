@@ -1,91 +1,24 @@
 import {Network} from "./models";
+import * as dijkstra from "dijkstrajs";
 
-function nodes(graph, node) {
-    return graph.reduce((p, c) => {
-        (c[0] === node) && p.push(c[1]);
-        return p;
-    }, []);
-}
-
-function hasEdgeBeenFollowedInPath({edge, path}) {
-    const indices = allIndices(path, edge.from);
-    return indices.some(i => path[i + 1] === edge.to);
-}
-
-function allIndices(arr, val) {
-    const indices = [];
-    for (let i = 0; i < arr.length; i++) {
-        if (arr[i] === val) {
-            indices.push(i);
+function convertNetwork(net: Network) {
+    let graph = {};
+    for (let n in net) {
+        let map = {};
+        for (let i = 0; i < net[n].length; i++) {
+            map[net[n][i]] = 1;
         }
+        graph[n] = map;
     }
-    return indices;
-}
-
-function memoize(fn: Function): Function {
-    const cache = new Map();
-    return function () {
-        const key = JSON.stringify(arguments);
-        let cached = cache.get(key);
-        if (cached) {
-            return cached;
-        }
-        cached = fn.apply(this, arguments);
-        cache.set(key, cached);
-        return cached;
-    };
-}
-
-
-function paths({graph = [], from, to}, path = []) {
-    const linkedNodes = memoize(nodes.bind(null, graph));
-    return explore(from, to);
-
-    function explore(currNode, to, paths = []) {
-        path.push(currNode);
-        for (let linkedNode of linkedNodes(currNode)) {
-            if (linkedNode === to) {
-                let result = path.slice(); // copy values
-                result.push(to);
-                paths.push(result);
-                continue;
-            }
-            if (!hasEdgeBeenFollowedInPath({
-                edge: {
-                    from: currNode,
-                    to: linkedNode
-                },
-                path
-            })) {
-                explore(linkedNode, to, paths);
-            }
-        }
-        path.pop();
-        return paths;
-    }
-}
-
-
-function edges(graph: Network) {
-    const edges = [];
-    for (let k in graph) {
-        graph[k].forEach(v => {
-            edges.push([k, v]);
-        })
-    }
-    return edges;
-}
-
-export function networkPaths(net: Network, a: string, b: string) {
-    return paths({graph: edges(net), from: a, to: b})
-        .sort((a, b) => a.length > b.length ? 1 : a.length < b.length ? -1 : 0);
+    return graph;
 }
 
 export function shortestPath(net: Network, a: string, b: string) {
-    const paths = networkPaths(net, a, b);
-    if (paths.length) {
-        return paths[0];
-    } else {
+    const graph = convertNetwork(net);
+
+    try {
+        return dijkstra.find_path(graph, a, b);
+    } catch (e) {
         return [];
     }
 }
