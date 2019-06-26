@@ -21,7 +21,50 @@ function mergeNetworks(net1, net2) {
 }
 exports.mergeNetworks = mergeNetworks;
 function deepEquals(a, b) {
-    return (JSON.stringify(a) === JSON.stringify(b));
+    const isArray = Array.isArray;
+    const keyList = Object.keys;
+    const hasProp = Object.prototype.hasOwnProperty;
+    if (a === b)
+        return true;
+    if (a && b && typeof a == 'object' && typeof b == 'object') {
+        const arrA = isArray(a), arrB = isArray(b);
+        let i, length, key;
+        if (arrA && arrB) {
+            length = a.length;
+            if (length != b.length)
+                return false;
+            for (i = length; i-- !== 0;)
+                if (!deepEquals(a[i], b[i]))
+                    return false;
+            return true;
+        }
+        if (arrA != arrB)
+            return false;
+        const dateA = a instanceof Date, dateB = b instanceof Date;
+        if (dateA != dateB)
+            return false;
+        if (dateA && dateB)
+            return a.getTime() == b.getTime();
+        const regexpA = a instanceof RegExp, regexpB = b instanceof RegExp;
+        if (regexpA != regexpB)
+            return false;
+        if (regexpA && regexpB)
+            return a.toString() == b.toString();
+        const keys = keyList(a);
+        length = keys.length;
+        if (length !== keyList(b).length)
+            return false;
+        for (i = length; i-- !== 0;)
+            if (!hasProp.call(b, keys[i]))
+                return false;
+        for (i = length; i-- !== 0;) {
+            key = keys[i];
+            if (!deepEquals(a[key], b[key]))
+                return false;
+        }
+        return true;
+    }
+    return a !== a && b !== b;
 }
 exports.deepEquals = deepEquals;
 function isObject(o) {
@@ -43,26 +86,6 @@ function clone(data) {
     return JSON.parse(JSON.stringify(data));
 }
 exports.clone = clone;
-function union(s1, s2) {
-    const results = new Set();
-    s1.forEach(s => results.add(s));
-    s2.forEach(s => results.add(s));
-    return s1;
-}
-exports.union = union;
-function difference(s1, s2) {
-    const results = new Set();
-    s1.forEach(s => {
-        if (!s2.has(s)) {
-            results.add(s);
-        }
-    });
-    return s1;
-}
-exports.difference = difference;
-function findPathToTarget(net, source, target) {
-}
-exports.findPathToTarget = findPathToTarget;
 function looksLikeValidPacket(msg) {
     return isObject(msg) &&
         msg.hasOwnProperty("header") &&

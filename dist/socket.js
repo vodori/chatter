@@ -6,16 +6,20 @@ const utils_1 = require("./utils");
 const operators_1 = require("rxjs/operators");
 const topo_1 = require("./topo");
 const CHATTER_UNSUBSCRIBE = "__chatterUnsubscribe";
-const CHATTER_DISCOVERY_OUT = "__chatterDiscoveryOut";
-const CHATTER_DISCOVERY_IN = "__chatterDiscoveryIn";
+const CHATTER_DISCOVERY = "__chatterDiscovery";
 const sockets = {};
 class ChatterSocket {
-    constructor(address, settings) {
-        this.address = address;
+    constructor(_address, settings) {
+        this._address = _address;
         this.settings = settings;
         const net = {};
-        net[address] = [];
+        net[_address] = [];
         this.network = new rxjs_1.BehaviorSubject(net);
+        const original = this.network.next.bind(this.network);
+        const modified = v => {
+            original(topo_1.normalizeNetwork(v));
+        };
+        this.network.next = modified;
         this.sourceBuffer = {};
         this.destinationPushBuffer = {};
         this.destinationRequestBuffer = {};
@@ -26,6 +30,10 @@ class ChatterSocket {
         this.openConsumers = {};
         this.openProducers = {};
         this.peers = {};
+        this.transactionIds = new Set();
+    }
+    address() {
+        return this._address;
     }
     broadcastPush(key, message = {}) {
         const transaction = utils_1.uuid();
@@ -33,13 +41,13 @@ class ChatterSocket {
             header: {
                 id: utils_1.uuid(),
                 protocol: models_1.NetProto.BROADCAST,
-                source: this.address
+                source: this._address
             },
             body: {
                 header: {
                     key: key,
                     protocol: models_1.AppProto.PUSH,
-                    source: this.address,
+                    source: this._address,
                     transaction: transaction,
                 },
                 body: message
@@ -61,7 +69,7 @@ class ChatterSocket {
                 consumer.error({ message: "Socket closed!" });
             }
         }
-        delete sockets[this.address];
+        delete sockets[this._address];
     }
     discover() {
         return this.network;
@@ -93,7 +101,7 @@ class ChatterSocket {
             header: {
                 key: key,
                 protocol: models_1.AppProto.PUSH,
-                source: this.address,
+                source: this._address,
                 target: address,
                 transaction: transaction,
             },
@@ -108,7 +116,7 @@ class ChatterSocket {
                 header: {
                     key: key,
                     protocol: models_1.AppProto.REQUEST,
-                    source: this.address,
+                    source: this._address,
                     target: address,
                     transaction: transaction,
                 },
@@ -129,7 +137,7 @@ class ChatterSocket {
                 header: {
                     key: key,
                     protocol: models_1.AppProto.SUBSCRIPTION,
-                    source: this.address,
+                    source: this._address,
                     target: address,
                     transaction: transaction,
                 },
@@ -184,7 +192,7 @@ class ChatterSocket {
                         next: true,
                         error: false,
                         complete: false,
-                        source: this.address,
+                        source: this._address,
                         target: message.body.header.source
                     },
                     body: response
@@ -198,7 +206,7 @@ class ChatterSocket {
                         next: false,
                         error: true,
                         complete: false,
-                        source: this.address,
+                        source: this._address,
                         target: message.body.header.source
                     },
                     body: error
@@ -212,7 +220,7 @@ class ChatterSocket {
                         next: false,
                         error: false,
                         complete: true,
-                        source: this.address,
+                        source: this._address,
                         target: message.body.header.source
                     },
                     body: null
@@ -259,7 +267,7 @@ class ChatterSocket {
     broadcastInboundMessage(message) {
         const newHeader = Object.assign({}, message.header, {
             id: utils_1.uuid(),
-            source: this.address
+            source: this._address
         });
         const newPacket = Object.assign({}, message, { header: newHeader });
         this.broadcast(newPacket);
@@ -297,7 +305,10 @@ class ChatterSocket {
         this.send(message.body);
     }
     receiveIncomingMessage(message) {
-        if (message.body.header.target === this.address || message.header.protocol === models_1.NetProto.BROADCAST) {
+        if (this.transactionIds.has(message.body.header.transaction)) {
+            return;
+        }
+        if (message.body.header.target === this._address || message.header.protocol === models_1.NetProto.BROADCAST) {
             if (!this.consumeInboundMessage(message)) {
                 if (!this.handleInboundMessage(message)) {
                     if (message.header.protocol === models_1.NetProto.POINT_TO_POINT) {
@@ -306,22 +317,25 @@ class ChatterSocket {
                 }
             }
         }
-        if (message.body.header.target !== this.address && message.header.protocol === models_1.NetProto.BROADCAST) {
-            this.broadcastInboundMessage(message);
+        if (message.body.header.target !== this._address && message.header.protocol === models_1.NetProto.BROADCAST) {
+            if (!this.transactionIds.has(message.body.header.transaction)) {
+                this.transactionIds.add(message.body.header.transaction);
+                this.broadcastInboundMessage(message);
+                setTimeout(() => {
+                    this.transactionIds.delete(message.body.header.transaction);
+                }, 10000);
+            }
         }
-        if (message.body.header.target !== this.address && message.header.protocol === models_1.NetProto.POINT_TO_POINT) {
+        if (message.body.header.target !== this._address && message.header.protocol === models_1.NetProto.POINT_TO_POINT) {
             this.forwardInboundMessage(message);
         }
     }
     bind() {
         this.allSubscriptions = new rxjs_1.Subscription();
-        this.handlePushes(CHATTER_DISCOVERY_IN, msg => {
+        this.handlePushes(CHATTER_DISCOVERY, msg => {
             const current = utils_1.clone(this.network.getValue());
             const merged = utils_1.mergeNetworks(current, msg.network);
             this.network.next(merged);
-        });
-        this.handlePushesPacket(CHATTER_DISCOVERY_OUT, (msg) => {
-            this.push(msg.header.source, CHATTER_DISCOVERY_IN, { network: this.network.getValue() });
         });
         this.handlePushes(CHATTER_UNSUBSCRIBE, (msg) => {
             const transaction = msg.transaction;
@@ -331,7 +345,7 @@ class ChatterSocket {
             }
         });
         this.allSubscriptions.add(this.incomingMessages().subscribe(msg => this.receiveIncomingMessage(msg)));
-        this.broadcastPush(CHATTER_DISCOVERY_OUT, { network: this.network.getValue() });
+        this.broadcastPush(CHATTER_DISCOVERY, { network: this.network.getValue() });
         this.allSubscriptions.add(this.network.pipe(operators_1.distinctUntilChanged(utils_1.deepEquals)).subscribe(changedNetwork => {
             for (let k in this.sourceBuffer) {
                 if (changedNetwork.hasOwnProperty(k)) {
@@ -340,7 +354,7 @@ class ChatterSocket {
                     delete this.sourceBuffer[k];
                 }
             }
-            this.broadcastPush(CHATTER_DISCOVERY_IN, { network: changedNetwork });
+            this.broadcastPush(CHATTER_DISCOVERY, { network: changedNetwork });
         }));
     }
     monkeyPatchObservableSubscribe(transaction, observable) {
@@ -386,13 +400,13 @@ class ChatterSocket {
     }
     send(message) {
         const net = this.network.getValue();
-        const path = topo_1.shortestPath(net, this.address, message.header.target);
+        const path = topo_1.shortestPath(net, this._address, message.header.target);
         if (path.length >= 2) {
             const nextHop = path[1];
             const netPacket = {
                 header: {
                     id: utils_1.uuid(),
-                    source: this.address,
+                    source: this._address,
                     protocol: models_1.NetProto.POINT_TO_POINT,
                     target: nextHop
                 },
@@ -424,13 +438,13 @@ class ChatterSocket {
         this.peers[peer] = this.peers[peer] || {};
         this.peers[peer][edgeId] = this.peers[peer][edgeId] || respond;
         const network = utils_1.clone(this.network.getValue());
-        if (peer !== this.address) {
-            if (network[this.address].indexOf(peer) === -1) {
-                network[this.address].push(peer);
+        if (peer !== this._address) {
+            if (network[this._address].indexOf(peer) === -1) {
+                network[this._address].push(peer);
             }
         }
         if (!network.hasOwnProperty(peer)) {
-            network[peer] = [this.address];
+            network[peer] = [this._address];
         }
         this.network.next(network);
     }
@@ -472,15 +486,24 @@ class ChatterSocket {
     }
     incomingMessages() {
         return rxjs_1.merge(this.listenToChromeMessages(), this.listenToFrameMessages(), this.listenToLocalMessages())
-            .pipe(operators_1.filter(msg => msg.header.source !== this.address), operators_1.filter(msg => msg.body.header.source !== this.address));
+            .pipe(operators_1.filter(msg => msg.header.source !== this._address), operators_1.filter(msg => msg.body.header.source !== this._address), operators_1.filter(msg => msg.header.target === this._address || msg.header.protocol === models_1.NetProto.BROADCAST));
     }
     listenToChromeMessages() {
         return new rxjs_1.Observable(observer => {
             const listener = (message, sender) => {
                 const origin = `chrome-extension://${sender.id}`;
-                if (this.isTrustedOrigin(origin)) {
+                const cameFromBackground = !sender.tab;
+                const cameFromActiveContentScript = (sender.tab && sender.tab.active);
+                if ((cameFromBackground || cameFromActiveContentScript) && this.isTrustedOrigin(origin)) {
                     if (utils_1.looksLikeValidPacket(message)) {
-                        this.registerPeer(message, `chrome::${origin}`, this.sendToChromeRuntime);
+                        this.registerPeer(message, `chrome::${origin}`, msg => {
+                            if (this.supportsTabs()) {
+                                this.sendToActiveChromeTab(msg);
+                            }
+                            else if (this.supportsRuntime()) {
+                                this.sendToChromeRuntime(msg);
+                            }
+                        });
                         observer.next(message);
                     }
                 }
@@ -528,12 +551,18 @@ class ChatterSocket {
         }
     }
     sendToChromeRuntime(message) {
-        if (models_1._chrome && models_1._chrome.runtime && models_1._chrome.runtime.id && models_1._chrome.runtime.sendMessage) {
-            models_1._chrome.runtime.sendMessage(models_1._chrome.runtime.id, message);
+        if (this.supportsRuntime()) {
+            models_1._chrome.runtime.sendMessage(message);
         }
     }
+    supportsRuntime() {
+        return models_1._chrome && models_1._chrome.runtime && !!models_1._chrome.runtime.sendMessage;
+    }
+    supportsTabs() {
+        return models_1._chrome && models_1._chrome.tabs && !!models_1._chrome.tabs.query;
+    }
     sendToActiveChromeTab(message) {
-        if (models_1._chrome && models_1._chrome.tabs && models_1._chrome.tabs.query) {
+        if (this.supportsTabs()) {
             models_1._chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
                 if (tabs.length) {
                     models_1._chrome.tabs.sendMessage(tabs[0].id, message);

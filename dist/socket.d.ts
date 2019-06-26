@@ -1,7 +1,7 @@
 import { AppPacket, NetPacket, Network, Settings, Socket } from "./models";
 import { BehaviorSubject, Observable, Observer, Subscription } from "rxjs";
 export declare class ChatterSocket implements Socket {
-    private address;
+    private _address;
     private settings;
     openProducers: {
         [s: string]: Subscription;
@@ -37,7 +37,9 @@ export declare class ChatterSocket implements Socket {
     openConsumers: {
         [s: string]: Observer<AppPacket>;
     };
-    constructor(address: string, settings: Settings);
+    transactionIds: Set<string>;
+    constructor(_address: string, settings: Settings);
+    address(): string;
     broadcastPush(key: string, message?: any): void;
     close(): void;
     discover(): Observable<Network>;
@@ -82,6 +84,8 @@ export declare class ChatterSocket implements Socket {
     sendToLocalBus(message: any): void;
     sendToChildIframes(message: any): void;
     sendToChromeRuntime(message: any): void;
+    supportsRuntime(): boolean;
+    supportsTabs(): boolean;
     sendToActiveChromeTab(message: any): void;
     request(address: string, key: string, message?: any): Observable<any>;
     subscription(address: string, key: string, message?: any): Observable<any>;

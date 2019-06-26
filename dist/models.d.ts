@@ -46,10 +46,10 @@ export declare type Network = {
     [s: string]: string[];
 };
 export interface Socket {
+    address(): string;
     bind(): void;
     discover(): Observable<Network>;
     push(address: string, key: string, message?: any): void;
-    broadcastPush(key: string, message?: any): void;
     request(address: string, key: string, message?: any): Observable<any>;
     requestPacket(address: string, key: string, message?: any): Observable<AppPacket>;
     subscription(address: string, key: string, message?: any): Observable<any>;
