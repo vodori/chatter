@@ -1,9 +1,8 @@
-import {bind, Socket} from "../src";
-import {combineLatest, forkJoin, interval, of, throwError} from "rxjs";
+import {bind} from "../src";
+import {combineLatest, interval, of, throwError} from "rxjs";
 import {tap} from "rxjs/operators";
 import {fromArray} from "rxjs/internal/observable/fromArray";
 import {deepEquals, uuid} from "../src/utils";
-import {shortestPath} from "../src/topo";
 
 
 test('automatic discovery', done => {
