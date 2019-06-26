@@ -259,7 +259,7 @@ test('completion propagation of subscriptions', done => {
 
 test('larger networks', done => {
 
-    const realSize = 10;
+    const realSize = 6;
 
     const observables = [];
 

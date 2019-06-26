@@ -72,7 +72,7 @@ export function deepEquals(a, b) {
     }
 
     return a!==a && b!==b;
-};
+}
 
 export function isObject(o: any) {
     if (!o) return false;
@@ -89,28 +89,6 @@ export function uuid() {
 
 export function clone<T>(data: T): T {
     return JSON.parse(JSON.stringify(data));
-}
-
-export function union<T>(s1: Set<T>, s2: Set<T>): Set<T> {
-    const results = new Set();
-    s1.forEach(s => results.add(s));
-    s2.forEach(s => results.add(s));
-    return s1;
-}
-
-export function difference<T>(s1: Set<T>, s2: Set<T>): Set<T> {
-    const results = new Set();
-    s1.forEach(s => {
-        if (!s2.has(s)) {
-            results.add(s);
-        }
-    });
-    return s1;
-}
-
-
-export function findPathToTarget(net: Network, source: string, target: string) {
-
 }
 
 export function looksLikeValidPacket(msg: any) {
