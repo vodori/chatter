@@ -177,6 +177,8 @@ test('error propagation of requests', done => {
     node2.request(node1.address(), "x").subscribe(next => {
 
     }, error => {
+        node1.close();
+        node2.close();
         expect(error).toEqual("rawr");
         done();
     }, () => {
@@ -202,6 +204,8 @@ test('completion propagation of requests', done => {
 
     }, () => {
         expect(values[0]).toEqual(1);
+        node1.close();
+        node2.close();
         done();
     })
 
@@ -220,6 +224,8 @@ test('error propagation of subscriptions', done => {
 
     }, error => {
         expect(error).toEqual("rawr");
+        node1.close();
+        node2.close();
         done();
     }, () => {
 
@@ -244,6 +250,8 @@ test('completion propagation of subscriptions', done => {
 
     }, () => {
         expect(values).toEqual([1, 2, 3]);
+        node1.close();
+        node2.close();
         done();
     })
 
@@ -270,7 +278,6 @@ test('larger networks', done => {
         }, {equal: true, previous: null});
 
         if (result.equal) {
-            console.log(results);
             done();
         }
     });

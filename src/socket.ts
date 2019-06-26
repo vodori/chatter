@@ -2,11 +2,10 @@ import {_chrome, _document, _localMessageBus, _window, AppPacket, AppProto, defa
 import {BehaviorSubject, merge, Observable, Observer, Subscription} from "rxjs";
 import {clone, deepEquals, looksLikeValidPacket, mergeNetworks, uuid} from "./utils";
 import {distinctUntilChanged, filter, first, map} from "rxjs/operators";
-import {shortestPath} from "./topo";
+import {normalizeNetwork, shortestPath} from "./topo";
 
 const CHATTER_UNSUBSCRIBE = "__chatterUnsubscribe";
-const CHATTER_DISCOVERY_OUT = "__chatterDiscoveryOut";
-const CHATTER_DISCOVERY_IN = "__chatterDiscoveryIn";
+const CHATTER_DISCOVERY = "__chatterDiscovery";
 
 
 const sockets: { [s: string]: Socket } = {};
@@ -31,6 +30,12 @@ export class ChatterSocket implements Socket {
         const net = {};
         net[_address] = [];
         this.network = new BehaviorSubject(net);
+        const original = this.network.next.bind(this.network);
+        const modified = v => {
+            original(normalizeNetwork(v));
+        };
+        this.network.next = modified;
+
         this.sourceBuffer = {};
         this.destinationPushBuffer = {};
         this.destinationRequestBuffer = {};
@@ -398,14 +403,10 @@ export class ChatterSocket implements Socket {
 
         this.allSubscriptions = new Subscription();
 
-        this.handlePushes(CHATTER_DISCOVERY_IN, msg => {
+        this.handlePushes(CHATTER_DISCOVERY, msg => {
             const current = clone(this.network.getValue());
             const merged = mergeNetworks(current, msg.network);
             this.network.next(merged);
-        });
-
-        this.handlePushesPacket(CHATTER_DISCOVERY_OUT, (msg: AppPacket) => {
-            this.push(msg.header.source, CHATTER_DISCOVERY_IN, {network: this.network.getValue()});
         });
 
         this.handlePushes(CHATTER_UNSUBSCRIBE, (msg: any) => {
@@ -418,7 +419,7 @@ export class ChatterSocket implements Socket {
 
         this.allSubscriptions.add(this.incomingMessages().subscribe(msg => this.receiveIncomingMessage(msg)));
 
-        this.broadcastPush(CHATTER_DISCOVERY_OUT, {network: this.network.getValue()});
+        this.broadcastPush(CHATTER_DISCOVERY, {network: this.network.getValue()});
 
         this.allSubscriptions.add(this.network.pipe(distinctUntilChanged(deepEquals)).subscribe(changedNetwork => {
             for (let k in this.sourceBuffer) {
@@ -429,7 +430,7 @@ export class ChatterSocket implements Socket {
                 }
             }
 
-            this.broadcastPush(CHATTER_DISCOVERY_IN, {network: changedNetwork});
+            this.broadcastPush(CHATTER_DISCOVERY, {network: changedNetwork});
         }));
     }
 
@@ -596,7 +597,8 @@ export class ChatterSocket implements Socket {
             this.listenToFrameMessages(),
             this.listenToLocalMessages())
             .pipe(filter(msg => msg.header.source !== this._address),
-                filter(msg => msg.body.header.source !== this._address));
+                filter(msg => msg.body.header.source !== this._address),
+                filter(msg => msg.header.target === this._address || msg.header.protocol === NetProto.BROADCAST));
     }
 
     listenToChromeMessages(): Observable<NetPacket> {

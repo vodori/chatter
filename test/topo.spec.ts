@@ -1,5 +1,5 @@
-import {Network} from "../src/models";
-import {shortestPath} from "../src/topo";
+import {normalizeNetwork, shortestPath} from "../src/topo";
+import {deepEquals} from "../src/utils";
 
 test('shortest path', () => {
 
@@ -28,7 +28,7 @@ test('shortest path', () => {
     // A B C
     // D E F
     // G H I
-    var graph = {
+    const graph = {
         a: ['b', 'd'],
         b: ['a', 'c', 'e'],
         c: ['b', 'f'],
@@ -43,5 +43,35 @@ test('shortest path', () => {
     console.log(g);
 
     console.log(shortestPath(graph, 'a', 'i'));
+
+});
+
+
+test('normalize graph', () => {
+
+    const given = {
+        a: ['b', 'c']
+    };
+
+    const expected = {
+        a: ['b', 'c'],
+        b: ['a'],
+        c: ['a']
+    };
+
+    expect(normalizeNetwork(given)).toEqual(expected);
+
+    const given2 = {
+        HUGE_0: ["HUGE_1"],
+        HUGE_1: ["HUGE_1", "HUGE_2"]
+    };
+
+    const expected2 = {
+        HUGE_0: ["HUGE_1"],
+        HUGE_1: ["HUGE_2", "HUGE_0"],
+        HUGE_2: ["HUGE_1"]
+    };
+
+    expect(deepEquals(normalizeNetwork(given2), expected2)).toBeTruthy();
 
 });
