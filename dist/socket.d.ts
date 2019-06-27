@@ -37,8 +37,10 @@ export declare class ChatterSocket implements Socket {
     openConsumers: {
         [s: string]: Observer<AppPacket>;
     };
-    transactionIds: Set<string>;
+    ignoredTransactionMessages: Set<string>;
+    cleanups: (() => void)[];
     constructor(_address: string, settings: Settings);
+    startDebugMode(): void;
     address(): string;
     broadcastPush(key: string, message?: any): void;
     close(): void;
@@ -56,6 +58,7 @@ export declare class ChatterSocket implements Socket {
     unhandleRequests(key: string): void;
     unhandleSubscriptions(key: string): void;
     handleInboundPushMessage(message: NetPacket): boolean;
+    logMessage(callback: any): void;
     handleIncomingResponsiveMessage(message: NetPacket, handlers: {
         [s: string]: (msg: AppPacket) => Observable<any>;
     }): boolean;
@@ -69,6 +72,8 @@ export declare class ChatterSocket implements Socket {
     processSubscriptionBuffer(key: string): void;
     bufferInboundMessage(message: NetPacket): void;
     forwardInboundMessage(message: NetPacket): void;
+    ignoreTransaction(transactionId: any): void;
+    isIgnoredTransaction(transactionId: any): boolean;
     receiveIncomingMessage(message: NetPacket): void;
     bind(): void;
     monkeyPatchObservableSubscribe(transaction: any, observable: Observable<any>): Observable<any>;
@@ -77,9 +82,14 @@ export declare class ChatterSocket implements Socket {
     isTrustedOrigin(origin: string): boolean;
     registerPeer(packet: NetPacket, edgeId: string, respond: (msg: any) => void): void;
     listenToLocalMessages(): Observable<NetPacket>;
-    listenToFrameMessages(): Observable<NetPacket>;
+    listenToParentFrameMessages(): Observable<NetPacket>;
+    listenToChildFrameMessages(): Observable<NetPacket>;
     incomingMessages(): Observable<NetPacket>;
-    listenToChromeMessages(): Observable<NetPacket>;
+    isIframeContext(): boolean;
+    isChromeContentScriptContext(): boolean;
+    isChromeBackgroundScriptContext(): boolean;
+    listenToMessagesFromChromeRuntime(): Observable<NetPacket>;
+    listenToMessagesFromChromeTabs(): Observable<NetPacket>;
     sendToParentFrame(message: any): void;
     sendToLocalBus(message: any): void;
     sendToChildIframes(message: any): void;
@@ -90,4 +100,6 @@ export declare class ChatterSocket implements Socket {
     request(address: string, key: string, message?: any): Observable<any>;
     subscription(address: string, key: string, message?: any): Observable<any>;
 }
+export declare function getAllSockets(): Socket[];
+export declare function closeAllSockets(): void;
 export declare function bind(name: string, settings?: Settings): Socket;

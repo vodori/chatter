@@ -1,28 +1,3 @@
-import {Network} from "./models";
-
-export function mergeNetworks(net1: Network, net2: Network): Network {
-    const merged = {};
-
-    for (let k in net1) {
-        const vs = new Set(net1[k]);
-        if (k in net2) {
-            net2[k].forEach(v => vs.add(v));
-        }
-        vs.delete(k);
-        merged[k] = Array.from(vs).sort();
-    }
-
-    for (let k in net2) {
-        if (!(k in net1)) {
-            const vs = new Set(net2[k]);
-            vs.delete(k);
-            merged[k] = Array.from(vs).sort();
-        }
-    }
-
-    return merged;
-}
-
 export function deepEquals(a, b) {
     const isArray = Array.isArray;
     const keyList = Object.keys;
@@ -78,6 +53,10 @@ export function isObject(o: any) {
     if (!o) return false;
     if (Array.isArray(o)) return false;
     return o.constructor == Object;
+}
+
+export function prettyPrint(x): string {
+    return JSON.stringify(x, null, 4);
 }
 
 export function uuid() {

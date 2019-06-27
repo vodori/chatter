@@ -57,12 +57,29 @@ export interface AppPacket {
 }
 
 export interface Settings {
-    trustedOrigins?: Set<string>
+    debug?: boolean,
+    allowChromeRuntime?: boolean,
+    allowChromeActiveTab?: boolean,
+    allowParentIframe?: boolean,
+    allowChildIframes?: boolean,
+    allowLocalBus?: boolean,
+    trustedOrigins?: Set<string>,
+    isTrustedOrigin?: (origin: string) => boolean
 }
 
 export function defaultSettings(): Settings {
-    return {trustedOrigins: new Set()}
+    return {
+        debug: false,
+        allowChildIframes: true,
+        allowChromeActiveTab: true,
+        allowChromeRuntime: true,
+        allowParentIframe: true,
+        allowLocalBus: true,
+        trustedOrigins: new Set(),
+        isTrustedOrigin: origin => false
+    }
 }
+
 export type Network = { [s: string]: string[] };
 
 

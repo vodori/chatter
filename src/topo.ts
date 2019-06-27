@@ -1,8 +1,8 @@
 import {Network} from "./models";
-import * as dijkstra from "dijkstrajs";
+import {find_path} from "dijkstrajs";
 import {clone} from "./utils";
 
-export function normalizeNetwork(net: Network) {
+export function normalizeNetwork(net: Network): Network {
 
     const cloned = clone(net);
 
@@ -16,12 +16,36 @@ export function normalizeNetwork(net: Network) {
         });
 
         cloned[k] = cloned[k].filter(v => v !== k);
+        cloned[k] = cloned[k].sort();
     }
 
     return cloned;
 }
 
-function convertNetwork(net: Network) {
+export function mergeNetworks(net1: Network, net2: Network): Network {
+    const merged = {};
+
+    for (let k in net1) {
+        const vs = new Set(net1[k]);
+        if (k in net2) {
+            net2[k].forEach(v => vs.add(v));
+        }
+        vs.delete(k);
+        merged[k] = Array.from(vs).sort();
+    }
+
+    for (let k in net2) {
+        if (!(k in net1)) {
+            const vs = new Set(net2[k]);
+            vs.delete(k);
+            merged[k] = Array.from(vs).sort();
+        }
+    }
+
+    return normalizeNetwork(merged);
+}
+
+function convertToWeightedGraph(net: Network) {
     let graph = {};
     for (let n in net) {
         let map = {};
@@ -34,10 +58,9 @@ function convertNetwork(net: Network) {
 }
 
 export function shortestPath(net: Network, a: string, b: string) {
-    const graph = convertNetwork(net);
-
+    const graph = convertToWeightedGraph(net);
     try {
-        return dijkstra.find_path(graph, a, b);
+        return find_path(graph, a, b);
     } catch (e) {
         return [];
     }

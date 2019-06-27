@@ -18,6 +18,15 @@ var AppProto;
     AppProto[AppProto["SUBSCRIPTION"] = "SUBSCRIPTION"] = "SUBSCRIPTION";
 })(AppProto = exports.AppProto || (exports.AppProto = {}));
 function defaultSettings() {
-    return { trustedOrigins: new Set() };
+    return {
+        debug: false,
+        allowChildIframes: true,
+        allowChromeActiveTab: true,
+        allowChromeRuntime: true,
+        allowParentIframe: true,
+        allowLocalBus: true,
+        trustedOrigins: new Set(),
+        isTrustedOrigin: origin => false
+    };
 }
 exports.defaultSettings = defaultSettings;

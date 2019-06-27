@@ -16,10 +16,9 @@ class ChatterSocket {
         net[_address] = [];
         this.network = new rxjs_1.BehaviorSubject(net);
         const original = this.network.next.bind(this.network);
-        const modified = v => {
+        this.network.next = v => {
             original(topo_1.normalizeNetwork(v));
         };
-        this.network.next = modified;
         this.sourceBuffer = {};
         this.destinationPushBuffer = {};
         this.destinationRequestBuffer = {};
@@ -30,7 +29,17 @@ class ChatterSocket {
         this.openConsumers = {};
         this.openProducers = {};
         this.peers = {};
-        this.transactionIds = new Set();
+        this.ignoredTransactionMessages = new Set();
+        this.cleanups = [];
+    }
+    startDebugMode() {
+        const sub = this.network.pipe(operators_1.debounceTime(5000), operators_1.distinctUntilChanged(utils_1.deepEquals)).subscribe(net => {
+            this.logMessage(() => {
+                console.log(`The network for node ${this.address()}`);
+                console.log(utils_1.prettyPrint(net));
+            });
+        });
+        this.cleanups.push(() => sub.unsubscribe());
     }
     address() {
         return this._address;
@@ -69,6 +78,7 @@ class ChatterSocket {
                 consumer.error({ message: "Socket closed!" });
             }
         }
+        this.cleanups.forEach(cleanup => cleanup());
         delete sockets[this._address];
     }
     discover() {
@@ -161,6 +171,12 @@ class ChatterSocket {
     }
     handleInboundPushMessage(message) {
         if (this.pushHandlers[message.body.header.key]) {
+            if (this.settings.debug) {
+                this.logMessage(() => {
+                    console.log(`Handling ${message.body.header.protocol} message of type ${message.body.header.key}`);
+                    console.log(utils_1.prettyPrint(message.body.body));
+                });
+            }
             const handler = this.pushHandlers[message.body.header.key];
             handler(message.body);
             return true;
@@ -169,9 +185,26 @@ class ChatterSocket {
             return false;
         }
     }
+    logMessage(callback) {
+        const addressLength = this.address().length;
+        let footer = "";
+        for (let i = 0; i < addressLength + 10; i++) {
+            footer += "=";
+        }
+        console.log(`=====${this.address()}=====`);
+        callback();
+        console.log(footer);
+        console.log("");
+    }
     handleIncomingResponsiveMessage(message, handlers) {
         if (handlers.hasOwnProperty(message.body.header.key)) {
             const handler = handlers[message.body.header.key];
+            if (this.settings.debug) {
+                this.logMessage(() => {
+                    console.log(`Handling ${message.body.header.protocol} message of type ${message.body.header.key}`);
+                    console.log(utils_1.prettyPrint(message.body.body));
+                });
+            }
             const responseStream = (() => {
                 try {
                     return handler(message.body);
@@ -304,10 +337,14 @@ class ChatterSocket {
     forwardInboundMessage(message) {
         this.send(message.body);
     }
+    ignoreTransaction(transactionId) {
+        this.ignoredTransactionMessages.add(transactionId);
+        setTimeout(() => this.ignoredTransactionMessages.delete(transactionId), 5000);
+    }
+    isIgnoredTransaction(transactionId) {
+        return this.ignoredTransactionMessages.has(transactionId);
+    }
     receiveIncomingMessage(message) {
-        if (this.transactionIds.has(message.body.header.transaction)) {
-            return;
-        }
         if (message.body.header.target === this._address || message.header.protocol === models_1.NetProto.BROADCAST) {
             if (!this.consumeInboundMessage(message)) {
                 if (!this.handleInboundMessage(message)) {
@@ -318,13 +355,8 @@ class ChatterSocket {
             }
         }
         if (message.body.header.target !== this._address && message.header.protocol === models_1.NetProto.BROADCAST) {
-            if (!this.transactionIds.has(message.body.header.transaction)) {
-                this.transactionIds.add(message.body.header.transaction);
-                this.broadcastInboundMessage(message);
-                setTimeout(() => {
-                    this.transactionIds.delete(message.body.header.transaction);
-                }, 10000);
-            }
+            this.ignoreTransaction(message.body.header.transaction);
+            this.broadcastInboundMessage(message);
         }
         if (message.body.header.target !== this._address && message.header.protocol === models_1.NetProto.POINT_TO_POINT) {
             this.forwardInboundMessage(message);
@@ -334,7 +366,7 @@ class ChatterSocket {
         this.allSubscriptions = new rxjs_1.Subscription();
         this.handlePushes(CHATTER_DISCOVERY, msg => {
             const current = utils_1.clone(this.network.getValue());
-            const merged = utils_1.mergeNetworks(current, msg.network);
+            const merged = topo_1.mergeNetworks(current, msg.network);
             this.network.next(merged);
         });
         this.handlePushes(CHATTER_UNSUBSCRIBE, (msg) => {
@@ -356,6 +388,9 @@ class ChatterSocket {
             }
             this.broadcastPush(CHATTER_DISCOVERY, { network: changedNetwork });
         }));
+        if (this.settings.debug) {
+            this.startDebugMode();
+        }
     }
     monkeyPatchObservableSubscribe(transaction, observable) {
         const originalSubscribe = observable.subscribe;
@@ -430,7 +465,12 @@ class ChatterSocket {
         this.sendToActiveChromeTab(message);
     }
     isTrustedOrigin(origin) {
-        return this.settings.trustedOrigins.has(origin) || this.settings.trustedOrigins.has("*");
+        const alreadyTrusted = this.settings.trustedOrigins.has(origin) || this.settings.trustedOrigins.has("*");
+        const isTrustedNow = alreadyTrusted || this.settings.isTrustedOrigin(origin);
+        if (isTrustedNow) {
+            this.settings.trustedOrigins.add(origin);
+        }
+        return isTrustedNow;
     }
     registerPeer(packet, edgeId, respond) {
         const peer = packet.header.source;
@@ -449,6 +489,9 @@ class ChatterSocket {
         this.network.next(network);
     }
     listenToLocalMessages() {
+        if (!this.settings.allowLocalBus) {
+            return rxjs_1.EMPTY;
+        }
         return new rxjs_1.Observable(observer => {
             const sub = models_1._localMessageBus.subscribe(packet => {
                 if (utils_1.looksLikeValidPacket(packet)) {
@@ -461,10 +504,41 @@ class ChatterSocket {
             };
         });
     }
-    listenToFrameMessages() {
+    listenToParentFrameMessages() {
+        if (!this.settings.allowParentIframe) {
+            return rxjs_1.EMPTY;
+        }
         return new rxjs_1.Observable(observer => {
             const listener = (event) => {
-                if (this.isTrustedOrigin(event.origin)) {
+                const isMyParent = event.source === window.parent && window.parent !== window;
+                if (this.isTrustedOrigin(event.origin) && isMyParent) {
+                    const message = event.data;
+                    if (utils_1.looksLikeValidPacket(message)) {
+                        this.registerPeer(message, `window::${event.origin}`, msg => {
+                            event.source.postMessage(msg, event.origin);
+                        });
+                        observer.next(message);
+                    }
+                }
+            };
+            if (models_1._window && models_1._window.addEventListener) {
+                models_1._window.addEventListener("message", listener);
+            }
+            return () => {
+                if (models_1._window && models_1._window.removeEventListener) {
+                    models_1._window.removeEventListener("message", listener);
+                }
+            };
+        });
+    }
+    listenToChildFrameMessages() {
+        if (this.settings.allowChildIframes) {
+            return rxjs_1.EMPTY;
+        }
+        return new rxjs_1.Observable(observer => {
+            const listener = (event) => {
+                const isChild = event.source !== window.parent && event.source !== window;
+                if (this.isTrustedOrigin(event.origin) && isChild) {
                     const message = event.data;
                     if (utils_1.looksLikeValidPacket(message)) {
                         this.registerPeer(message, `window::${event.origin}`, msg => {
@@ -485,24 +559,56 @@ class ChatterSocket {
         });
     }
     incomingMessages() {
-        return rxjs_1.merge(this.listenToChromeMessages(), this.listenToFrameMessages(), this.listenToLocalMessages())
-            .pipe(operators_1.filter(msg => msg.header.source !== this._address), operators_1.filter(msg => msg.body.header.source !== this._address), operators_1.filter(msg => msg.header.target === this._address || msg.header.protocol === models_1.NetProto.BROADCAST));
+        return rxjs_1.merge(this.listenToMessagesFromChromeRuntime(), this.listenToMessagesFromChromeTabs(), this.listenToChildFrameMessages(), this.listenToParentFrameMessages(), this.listenToLocalMessages())
+            .pipe(operators_1.filter(msg => msg.header.source !== this._address), operators_1.filter(msg => msg.body.header.source !== this._address), operators_1.filter(msg => msg.header.target === this._address || msg.header.protocol === models_1.NetProto.BROADCAST), operators_1.filter(msg => !this.isIgnoredTransaction(msg.body.header.transaction)));
     }
-    listenToChromeMessages() {
+    isIframeContext() {
+        return !!models_1._window && !!models_1._window.parent && models_1._window.parent !== models_1._window;
+    }
+    isChromeContentScriptContext() {
+        return !!models_1._chrome && !!models_1._chrome.runtime && !models_1._chrome.tabs;
+    }
+    isChromeBackgroundScriptContext() {
+        return !!models_1._chrome && !!models_1._chrome.runtime && !!models_1._chrome.tabs;
+    }
+    listenToMessagesFromChromeRuntime() {
+        if (!this.settings.allowChromeRuntime) {
+            return rxjs_1.EMPTY;
+        }
         return new rxjs_1.Observable(observer => {
             const listener = (message, sender) => {
                 const origin = `chrome-extension://${sender.id}`;
-                const cameFromBackground = !sender.tab;
-                const cameFromActiveContentScript = (sender.tab && sender.tab.active);
-                if ((cameFromBackground || cameFromActiveContentScript) && this.isTrustedOrigin(origin)) {
+                if (!sender.tab && this.isTrustedOrigin(origin)) {
                     if (utils_1.looksLikeValidPacket(message)) {
-                        this.registerPeer(message, `chrome::${origin}`, msg => {
-                            if (this.supportsTabs()) {
-                                this.sendToActiveChromeTab(msg);
-                            }
-                            else if (this.supportsRuntime()) {
-                                this.sendToChromeRuntime(msg);
-                            }
+                        this.registerPeer(message, `chromeRuntime::${origin}`, msg => {
+                            this.sendToChromeRuntime(msg);
+                        });
+                        observer.next(message);
+                    }
+                }
+            };
+            if (models_1._chrome && models_1._chrome.runtime && models_1._chrome.runtime.onMessage && models_1._chrome.runtime.onMessage.addListener) {
+                models_1._chrome.runtime.onMessage.addListener(listener);
+            }
+            return () => {
+                if (models_1._chrome && models_1._chrome.runtime && models_1._chrome.runtime.onMessage && models_1._chrome.runtime.onMessage.removeListener) {
+                    models_1._chrome.runtime.onMessage.removeListener(listener);
+                }
+            };
+        });
+    }
+    listenToMessagesFromChromeTabs() {
+        if (!this.settings.allowChromeActiveTab) {
+            return rxjs_1.EMPTY;
+        }
+        return new rxjs_1.Observable(observer => {
+            const listener = (message, sender) => {
+                const origin = `chrome-extension://${sender.id}`;
+                const cameFromActiveContentScript = (sender.tab && sender.tab.active);
+                if (cameFromActiveContentScript && this.isTrustedOrigin(origin)) {
+                    if (utils_1.looksLikeValidPacket(message)) {
+                        this.registerPeer(message, `chromeTab::${origin}`, msg => {
+                            this.sendToActiveChromeTab(msg);
                         });
                         observer.next(message);
                     }
@@ -519,39 +625,41 @@ class ChatterSocket {
         });
     }
     sendToParentFrame(message) {
-        if (models_1._window && models_1._window.parent && models_1._window.parent !== models_1._window) {
+        if (models_1._window && models_1._window.parent && models_1._window.parent !== models_1._window && this.settings.allowParentIframe) {
             this.settings.trustedOrigins.forEach(origin => {
                 models_1._window.parent.postMessage(message, origin);
             });
         }
     }
     sendToLocalBus(message) {
-        if (models_1._localMessageBus && !models_1._localMessageBus.closed) {
+        if (models_1._localMessageBus && !models_1._localMessageBus.closed && this.settings.allowLocalBus) {
             models_1._localMessageBus.next(message);
         }
     }
     sendToChildIframes(message) {
-        const getIframes = () => {
-            return Array.from(models_1._document.getElementsByTagName('iframe'));
-        };
-        const send = () => {
-            getIframes().forEach(frame => {
-                this.settings.trustedOrigins.forEach(origin => {
-                    frame.contentWindow.postMessage(message, origin);
+        if (this.settings.allowChildIframes) {
+            const getIframes = () => {
+                return Array.from(models_1._document.getElementsByTagName('iframe'));
+            };
+            const send = () => {
+                getIframes().forEach(frame => {
+                    this.settings.trustedOrigins.forEach(origin => {
+                        frame.contentWindow.postMessage(message, origin);
+                    });
                 });
-            });
-        };
-        if (!models_1._document || models_1._document.readyState === 'loading') {
-            if (models_1._window && models_1._window.addEventListener) {
-                models_1._window.addEventListener('DOMContentLoaded', send);
+            };
+            if (!models_1._document || models_1._document.readyState === 'loading') {
+                if (models_1._window && models_1._window.addEventListener) {
+                    models_1._window.addEventListener('DOMContentLoaded', send);
+                }
             }
-        }
-        else {
-            send();
+            else {
+                send();
+            }
         }
     }
     sendToChromeRuntime(message) {
-        if (this.supportsRuntime()) {
+        if (this.supportsRuntime() && this.settings.allowChromeRuntime) {
             models_1._chrome.runtime.sendMessage(message);
         }
     }
@@ -562,7 +670,7 @@ class ChatterSocket {
         return models_1._chrome && models_1._chrome.tabs && !!models_1._chrome.tabs.query;
     }
     sendToActiveChromeTab(message) {
-        if (this.supportsTabs()) {
+        if (this.supportsTabs() && this.settings.allowChromeActiveTab) {
             models_1._chrome.tabs.query({ active: true, currentWindow: true }, tabs => {
                 if (tabs.length) {
                     models_1._chrome.tabs.sendMessage(tabs[0].id, message);
@@ -578,12 +686,25 @@ class ChatterSocket {
     }
 }
 exports.ChatterSocket = ChatterSocket;
-function bind(name, settings = models_1.defaultSettings()) {
+function getAllSockets() {
+    const socks = [];
+    for (let k in sockets) {
+        const sock = sockets[k];
+        socks.push(sock);
+    }
+    return socks;
+}
+exports.getAllSockets = getAllSockets;
+function closeAllSockets() {
+    getAllSockets().forEach(sock => sock.close());
+}
+exports.closeAllSockets = closeAllSockets;
+function bind(name, settings = {}) {
     if (sockets[name]) {
         return sockets[name];
     }
     else {
-        const socket = new ChatterSocket(name, settings);
+        const socket = new ChatterSocket(name, Object.assign(models_1.defaultSettings(), settings));
         sockets[name] = socket;
         socket.bind();
         return socket;
