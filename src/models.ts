@@ -62,7 +62,9 @@ export interface Settings {
     allowChromeActiveTab?: boolean,
     allowParentIframe?: boolean,
     allowChildIframes?: boolean,
-    trustedOrigins?: Set<string>
+    allowLocalBus?: boolean,
+    trustedOrigins?: Set<string>,
+    isTrustedOrigin?: (origin: string) => boolean
 }
 
 export function defaultSettings(): Settings {
@@ -72,7 +74,9 @@ export function defaultSettings(): Settings {
         allowChromeActiveTab: true,
         allowChromeRuntime: true,
         allowParentIframe: true,
+        allowLocalBus: true,
         trustedOrigins: new Set(),
+        isTrustedOrigin: origin => false
     }
 }
 

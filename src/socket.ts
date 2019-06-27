@@ -224,6 +224,14 @@ export class ChatterSocket implements Socket {
 
     handleInboundPushMessage(message: NetPacket): boolean {
         if (this.pushHandlers[message.body.header.key]) {
+
+            if(this.settings.debug) {
+                this.logMessage(() => {
+                    console.log(`Handling ${message.body.header.protocol} message of type ${message.body.header.key}`);
+                    console.log(prettyPrint(message.body.body));
+                });
+            }
+
             const handler = this.pushHandlers[message.body.header.key];
             handler(message.body);
             return true;
@@ -242,7 +250,7 @@ export class ChatterSocket implements Socket {
         console.log(`=====${this.address()}=====`);
         callback();
         console.log(footer);
-        console.log();
+        console.log("");
     }
 
 
@@ -565,7 +573,12 @@ export class ChatterSocket implements Socket {
 
 
     isTrustedOrigin(origin: string): boolean {
-        return this.settings.trustedOrigins.has(origin) || this.settings.trustedOrigins.has("*");
+        const alreadyTrusted = this.settings.trustedOrigins.has(origin) || this.settings.trustedOrigins.has("*");
+        const isTrustedNow = alreadyTrusted || this.settings.isTrustedOrigin(origin);
+        if (isTrustedNow) {
+            this.settings.trustedOrigins.add(origin);
+        }
+        return isTrustedNow;
     }
 
     registerPeer(packet: NetPacket, edgeId: string, respond: (msg: any) => void): void {
@@ -591,6 +604,10 @@ export class ChatterSocket implements Socket {
 
 
     listenToLocalMessages(): Observable<NetPacket> {
+        if (!this.settings.allowLocalBus) {
+            return EMPTY;
+        }
+
         return new Observable(observer => {
 
             const sub = _localMessageBus.subscribe(packet => {
@@ -606,10 +623,15 @@ export class ChatterSocket implements Socket {
         });
     }
 
-    listenToFrameMessages(): Observable<NetPacket> {
+    listenToParentFrameMessages(): Observable<NetPacket> {
+        if(!this.settings.allowParentIframe) {
+            return EMPTY;
+        }
+
         return new Observable<NetPacket>(observer => {
             const listener = (event: MessageEvent) => {
-                if (this.isTrustedOrigin(event.origin)) {
+                const isMyParent = event.source === window.parent && window.parent !== window;
+                if (this.isTrustedOrigin(event.origin) && isMyParent) {
                     const message = event.data;
                     if (looksLikeValidPacket(message)) {
                         this.registerPeer(message, `window::${event.origin}`, msg => {
@@ -630,10 +652,42 @@ export class ChatterSocket implements Socket {
         });
     }
 
+    listenToChildFrameMessages(): Observable<NetPacket> {
+        if (this.settings.allowChildIframes) {
+            return EMPTY;
+        }
+
+        return new Observable<NetPacket>(observer => {
+            const listener = (event: MessageEvent) => {
+                const isChild = event.source !== window.parent && event.source !== window;
+                if (this.isTrustedOrigin(event.origin) && isChild) {
+                    const message = event.data;
+                    if (looksLikeValidPacket(message)) {
+                        this.registerPeer(message, `window::${event.origin}`, msg => {
+                            (<any>event.source).postMessage(msg, event.origin);
+                        });
+                        observer.next(message)
+                    }
+                }
+            };
+            if (_window && _window.addEventListener) {
+                _window.addEventListener("message", listener);
+            }
+            return () => {
+                if (_window && _window.removeEventListener) {
+                    _window.removeEventListener("message", listener);
+                }
+            }
+        });
+    }
 
     incomingMessages(): Observable<NetPacket> {
 
-        return merge(this.listenToMessagesFromChromeRuntime(), this.listenToFrameMessages(), this.listenToLocalMessages())
+        return merge(this.listenToMessagesFromChromeRuntime(),
+            this.listenToMessagesFromChromeTabs(),
+            this.listenToChildFrameMessages(),
+            this.listenToParentFrameMessages(),
+            this.listenToLocalMessages())
             .pipe(filter(msg => msg.header.source !== this._address),
                 filter(msg => msg.body.header.source !== this._address),
                 filter(msg => msg.header.target === this._address || msg.header.protocol === NetProto.BROADCAST),
@@ -712,7 +766,7 @@ export class ChatterSocket implements Socket {
     }
 
     sendToParentFrame(message: any): void {
-        if (_window && _window.parent && _window.parent !== _window) {
+        if (_window && _window.parent && _window.parent !== _window && this.settings.allowParentIframe) {
             this.settings.trustedOrigins.forEach(origin => {
                 _window.parent.postMessage(message, origin);
             });
@@ -720,35 +774,37 @@ export class ChatterSocket implements Socket {
     }
 
     sendToLocalBus(message: any): void {
-        if (_localMessageBus && !_localMessageBus.closed) {
+        if (_localMessageBus && !_localMessageBus.closed && this.settings.allowLocalBus) {
             _localMessageBus.next(message);
         }
     }
 
     sendToChildIframes(message: any): void {
-        const getIframes = (): HTMLIFrameElement[] => {
-            return Array.from(_document.getElementsByTagName('iframe'));
-        };
+        if(this.settings.allowChildIframes) {
+            const getIframes = (): HTMLIFrameElement[] => {
+                return Array.from(_document.getElementsByTagName('iframe'));
+            };
 
-        const send = () => {
-            getIframes().forEach(frame => {
-                this.settings.trustedOrigins.forEach(origin => {
-                    frame.contentWindow.postMessage(message, origin);
+            const send = () => {
+                getIframes().forEach(frame => {
+                    this.settings.trustedOrigins.forEach(origin => {
+                        frame.contentWindow.postMessage(message, origin);
+                    });
                 });
-            });
-        };
+            };
 
-        if (!_document || _document.readyState === 'loading') {
-            if (_window && _window.addEventListener) {
-                _window.addEventListener('DOMContentLoaded', send);
+            if (!_document || _document.readyState === 'loading') {
+                if (_window && _window.addEventListener) {
+                    _window.addEventListener('DOMContentLoaded', send);
+                }
+            } else {
+                send();
             }
-        } else {
-            send();
         }
     }
 
     sendToChromeRuntime(message: any): void {
-        if (this.supportsRuntime()) {
+        if (this.supportsRuntime() && this.settings.allowChromeRuntime) {
             _chrome.runtime.sendMessage(message);
         }
     }
@@ -762,7 +818,7 @@ export class ChatterSocket implements Socket {
     }
 
     sendToActiveChromeTab(message: any): void {
-        if (this.supportsTabs()) {
+        if (this.supportsTabs() && this.settings.allowChromeActiveTab) {
             _chrome.tabs.query({active: true, currentWindow: true}, tabs => {
                 if (tabs.length) {
                     _chrome.tabs.sendMessage(tabs[0].id, message);
