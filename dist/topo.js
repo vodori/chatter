@@ -1,6 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-const dijkstra = require("dijkstrajs");
+const dijkstrajs_1 = require("dijkstrajs");
 const utils_1 = require("./utils");
 function normalizeNetwork(net) {
     const cloned = utils_1.clone(net);
@@ -14,11 +14,32 @@ function normalizeNetwork(net) {
             }
         });
         cloned[k] = cloned[k].filter(v => v !== k);
+        cloned[k] = cloned[k].sort();
     }
     return cloned;
 }
 exports.normalizeNetwork = normalizeNetwork;
-function convertNetwork(net) {
+function mergeNetworks(net1, net2) {
+    const merged = {};
+    for (let k in net1) {
+        const vs = new Set(net1[k]);
+        if (k in net2) {
+            net2[k].forEach(v => vs.add(v));
+        }
+        vs.delete(k);
+        merged[k] = Array.from(vs).sort();
+    }
+    for (let k in net2) {
+        if (!(k in net1)) {
+            const vs = new Set(net2[k]);
+            vs.delete(k);
+            merged[k] = Array.from(vs).sort();
+        }
+    }
+    return normalizeNetwork(merged);
+}
+exports.mergeNetworks = mergeNetworks;
+function convertToWeightedGraph(net) {
     let graph = {};
     for (let n in net) {
         let map = {};
@@ -30,9 +51,9 @@ function convertNetwork(net) {
     return graph;
 }
 function shortestPath(net, a, b) {
-    const graph = convertNetwork(net);
+    const graph = convertToWeightedGraph(net);
     try {
-        return dijkstra.find_path(graph, a, b);
+        return dijkstrajs_1.find_path(graph, a, b);
     }
     catch (e) {
         return [];

@@ -39,7 +39,14 @@ export interface AppPacket {
     body: any;
 }
 export interface Settings {
+    debug?: boolean;
+    allowChromeRuntime?: boolean;
+    allowChromeActiveTab?: boolean;
+    allowParentIframe?: boolean;
+    allowChildIframes?: boolean;
+    allowLocalBus?: boolean;
     trustedOrigins?: Set<string>;
+    isTrustedOrigin?: (origin: string) => boolean;
 }
 export declare function defaultSettings(): Settings;
 export declare type Network = {

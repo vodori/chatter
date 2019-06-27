@@ -1,25 +1,5 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-function mergeNetworks(net1, net2) {
-    const merged = {};
-    for (let k in net1) {
-        const vs = new Set(net1[k]);
-        if (k in net2) {
-            net2[k].forEach(v => vs.add(v));
-        }
-        vs.delete(k);
-        merged[k] = Array.from(vs).sort();
-    }
-    for (let k in net2) {
-        if (!(k in net1)) {
-            const vs = new Set(net2[k]);
-            vs.delete(k);
-            merged[k] = Array.from(vs).sort();
-        }
-    }
-    return merged;
-}
-exports.mergeNetworks = mergeNetworks;
 function deepEquals(a, b) {
     const isArray = Array.isArray;
     const keyList = Object.keys;
@@ -75,6 +55,10 @@ function isObject(o) {
     return o.constructor == Object;
 }
 exports.isObject = isObject;
+function prettyPrint(x) {
+    return JSON.stringify(x, null, 4);
+}
+exports.prettyPrint = prettyPrint;
 function uuid() {
     return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
         const r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
