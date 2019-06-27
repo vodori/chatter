@@ -41,7 +41,7 @@ test('normalize graph', () => {
 
     const expected2 = {
         HUGE_0: ["HUGE_1"],
-        HUGE_1: ["HUGE_2", "HUGE_0"],
+        HUGE_1: ["HUGE_0", "HUGE_2"],
         HUGE_2: ["HUGE_1"]
     };
 
