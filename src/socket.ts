@@ -1,8 +1,8 @@
 import {_chrome, _document, _localMessageBus, _window, AppPacket, AppProto, defaultSettings, NetPacket, NetProto, Network, Settings, Socket} from "./models";
-import {BehaviorSubject, merge, Observable, Observer, Subscription} from "rxjs";
-import {clone, deepEquals, looksLikeValidPacket, mergeNetworks, uuid} from "./utils";
-import {distinctUntilChanged, filter, first, map} from "rxjs/operators";
-import {normalizeNetwork, shortestPath} from "./topo";
+import {BehaviorSubject, EMPTY, merge, Observable, Observer, Subscription} from "rxjs";
+import {clone, deepEquals, looksLikeValidPacket, prettyPrint, uuid} from "./utils";
+import {debounce, debounceTime, distinctUntilChanged, filter, first, map} from "rxjs/operators";
+import {mergeNetworks, normalizeNetwork, shortestPath} from "./topo";
 
 const CHATTER_UNSUBSCRIBE = "__chatterUnsubscribe";
 const CHATTER_DISCOVERY = "__chatterDiscovery";
@@ -24,17 +24,17 @@ export class ChatterSocket implements Socket {
     subscriptionHandlers: { [s: string]: (msg: AppPacket) => Observable<any> };
     peers: { [s: string]: { [s: string]: (msg: NetPacket) => void } };
     openConsumers: { [s: string]: Observer<AppPacket> };
-    transactionIds: Set<string>;
+    ignoredTransactionMessages: Set<string>;
+    cleanups: (() => void)[];
 
     constructor(private _address: string, private settings: Settings) {
         const net = {};
         net[_address] = [];
         this.network = new BehaviorSubject(net);
         const original = this.network.next.bind(this.network);
-        const modified = v => {
+        this.network.next = v => {
             original(normalizeNetwork(v));
         };
-        this.network.next = modified;
 
         this.sourceBuffer = {};
         this.destinationPushBuffer = {};
@@ -46,7 +46,20 @@ export class ChatterSocket implements Socket {
         this.openConsumers = {};
         this.openProducers = {};
         this.peers = {};
-        this.transactionIds = new Set<string>();
+        this.ignoredTransactionMessages = new Set<string>();
+        this.cleanups = [];
+    }
+
+
+    startDebugMode() {
+        const sub = this.network.pipe(debounceTime(5000), distinctUntilChanged(deepEquals)).subscribe(net => {
+            this.logMessage(() => {
+                console.log(`The network for node ${this.address()}`);
+                console.log(prettyPrint(net));
+            });
+        });
+
+        this.cleanups.push(() => sub.unsubscribe());
     }
 
     address(): string {
@@ -94,6 +107,8 @@ export class ChatterSocket implements Socket {
                 consumer.error({message: "Socket closed!"});
             }
         }
+
+        this.cleanups.forEach(cleanup => cleanup());
 
         delete sockets[this._address];
     }
@@ -217,9 +232,30 @@ export class ChatterSocket implements Socket {
         }
     }
 
+
+    logMessage(callback) {
+        const addressLength = this.address().length;
+        let footer = "";
+        for (let i = 0; i < addressLength + 10; i++) {
+            footer += "=";
+        }
+        console.log(`=====${this.address()}=====`);
+        callback();
+        console.log(footer);
+        console.log();
+    }
+
+
     handleIncomingResponsiveMessage(message: NetPacket, handlers: { [s: string]: (msg: AppPacket) => Observable<any> }): boolean {
         if (handlers.hasOwnProperty(message.body.header.key)) {
             const handler = handlers[message.body.header.key];
+
+            if(this.settings.debug) {
+                this.logMessage(() => {
+                    console.log(`Handling ${message.body.header.protocol} message of type ${message.body.header.key}`);
+                    console.log(prettyPrint(message.body.body));
+                });
+            }
 
             const responseStream = (() => {
                 try {
@@ -367,12 +403,16 @@ export class ChatterSocket implements Socket {
         this.send(message.body);
     }
 
+    ignoreTransaction(transactionId) {
+        this.ignoredTransactionMessages.add(transactionId);
+        setTimeout(() => this.ignoredTransactionMessages.delete(transactionId), 5000)
+    }
+
+    isIgnoredTransaction(transactionId) {
+        return this.ignoredTransactionMessages.has(transactionId);
+    }
 
     receiveIncomingMessage(message: NetPacket) {
-
-        if (this.transactionIds.has(message.body.header.transaction)) {
-            return;
-        }
 
         if (message.body.header.target === this._address || message.header.protocol === NetProto.BROADCAST) {
             if (!this.consumeInboundMessage(message)) {
@@ -385,13 +425,8 @@ export class ChatterSocket implements Socket {
         }
 
         if (message.body.header.target !== this._address && message.header.protocol === NetProto.BROADCAST) {
-            if (!this.transactionIds.has(message.body.header.transaction)) {
-                this.transactionIds.add(message.body.header.transaction);
-                this.broadcastInboundMessage(message);
-                setTimeout(() => {
-                    this.transactionIds.delete(message.body.header.transaction);
-                }, 10000);
-            }
+            this.ignoreTransaction(message.body.header.transaction);
+            this.broadcastInboundMessage(message);
         }
 
         if (message.body.header.target !== this._address && message.header.protocol === NetProto.POINT_TO_POINT) {
@@ -432,6 +467,10 @@ export class ChatterSocket implements Socket {
 
             this.broadcastPush(CHATTER_DISCOVERY, {network: changedNetwork});
         }));
+
+        if(this.settings.debug) {
+            this.startDebugMode();
+        }
     }
 
     monkeyPatchObservableSubscribe(transaction, observable: Observable<any>): Observable<any> {
@@ -593,29 +632,67 @@ export class ChatterSocket implements Socket {
 
 
     incomingMessages(): Observable<NetPacket> {
-        return merge(this.listenToChromeMessages(),
-            this.listenToFrameMessages(),
-            this.listenToLocalMessages())
+
+        return merge(this.listenToMessagesFromChromeRuntime(), this.listenToFrameMessages(), this.listenToLocalMessages())
             .pipe(filter(msg => msg.header.source !== this._address),
                 filter(msg => msg.body.header.source !== this._address),
-                filter(msg => msg.header.target === this._address || msg.header.protocol === NetProto.BROADCAST));
+                filter(msg => msg.header.target === this._address || msg.header.protocol === NetProto.BROADCAST),
+                filter(msg => !this.isIgnoredTransaction(msg.body.header.transaction)));
     }
 
-    listenToChromeMessages(): Observable<NetPacket> {
-        return new Observable<NetPacket>(observer => {
+    isIframeContext() {
+        return !!_window && !!_window.parent && _window.parent !== _window;
+    }
 
+    isChromeContentScriptContext() {
+        return !!_chrome && !!_chrome.runtime && !_chrome.tabs;
+    }
+
+    isChromeBackgroundScriptContext() {
+        return !!_chrome && !!_chrome.runtime && !!_chrome.tabs;
+    }
+
+    listenToMessagesFromChromeRuntime(): Observable<NetPacket> {
+        if(!this.settings.allowChromeRuntime) {
+            return EMPTY;
+        }
+        return new Observable<NetPacket>(observer => {
             const listener: any = (message: any, sender: any) => {
                 const origin = `chrome-extension://${sender.id}`;
-                const cameFromBackground = !sender.tab;
-                const cameFromActiveContentScript = (sender.tab && sender.tab.active);
-                if ((cameFromBackground || cameFromActiveContentScript) && this.isTrustedOrigin(origin)) {
+                if (!sender.tab && this.isTrustedOrigin(origin)) {
                     if (looksLikeValidPacket(message)) {
-                        this.registerPeer(message, `chrome::${origin}`, msg => {
-                            if (this.supportsTabs()) {
-                                this.sendToActiveChromeTab(msg);
-                            } else if (this.supportsRuntime()) {
-                                this.sendToChromeRuntime(msg);
-                            }
+                        this.registerPeer(message, `chromeRuntime::${origin}`, msg => {
+                            this.sendToChromeRuntime(msg);
+                        });
+                        observer.next(message);
+                    }
+                }
+            };
+
+            if (_chrome && _chrome.runtime && _chrome.runtime.onMessage && _chrome.runtime.onMessage.addListener) {
+                _chrome.runtime.onMessage.addListener(listener);
+            }
+
+            return () => {
+                if (_chrome && _chrome.runtime && _chrome.runtime.onMessage && _chrome.runtime.onMessage.removeListener) {
+                    _chrome.runtime.onMessage.removeListener(listener);
+                }
+            }
+        })
+    }
+
+    listenToMessagesFromChromeTabs(): Observable<NetPacket> {
+        if(!this.settings.allowChromeActiveTab) {
+            return EMPTY;
+        }
+        return new Observable<NetPacket>(observer => {
+            const listener: any = (message: any, sender: any) => {
+                const origin = `chrome-extension://${sender.id}`;
+                const cameFromActiveContentScript = (sender.tab && sender.tab.active);
+                if (cameFromActiveContentScript && this.isTrustedOrigin(origin)) {
+                    if (looksLikeValidPacket(message)) {
+                        this.registerPeer(message, `chromeTab::${origin}`, msg => {
+                            this.sendToActiveChromeTab(msg);
                         });
                         observer.next(message);
                     }
@@ -705,11 +782,24 @@ export class ChatterSocket implements Socket {
 
 }
 
-export function bind(name: string, settings: Settings = defaultSettings()): Socket {
+export function getAllSockets(): Socket[] {
+    const socks = [];
+    for (let k in sockets) {
+        const sock = sockets[k];
+        socks.push(sock);
+    }
+    return socks;
+}
+
+export function closeAllSockets(): void {
+   getAllSockets().forEach(sock => sock.close());
+}
+
+export function bind(name: string, settings: Settings = {}): Socket {
     if (sockets[name]) {
         return sockets[name];
     } else {
-        const socket = new ChatterSocket(name, settings);
+        const socket = new ChatterSocket(name, Object.assign(defaultSettings(), settings));
         sockets[name] = socket;
         socket.bind();
         return socket;

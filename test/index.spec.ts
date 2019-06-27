@@ -1,19 +1,23 @@
-import {bind} from "../src";
+import {bind, closeAllSockets} from "../src";
 import {combineLatest, interval, of, throwError} from "rxjs";
 import {tap} from "rxjs/operators";
 import {fromArray} from "rxjs/internal/observable/fromArray";
 import {deepEquals, uuid} from "../src/utils";
 
+afterEach(() => {
+    closeAllSockets();
+});
 
 test('automatic discovery', done => {
 
     const x1 = bind("node1");
     const x2 = bind("node2");
 
+    const expected = {"node1": ["node2"], "node2": ["node1"]};
+
     combineLatest([x1.discover(), x2.discover()]).subscribe(([x1Net, x2Net]) => {
-        expect(x1Net).toEqual(x2Net);
-        x1.close();
-        x2.close();
+        expect(x1Net).toEqual(expected);
+        expect(x2Net).toEqual(expected);
         done();
     });
 
@@ -26,8 +30,6 @@ test('pushes get sent and handled', done => {
 
     b1.handlePushes("m1", msg => {
         expect(msg).toEqual("hello");
-        b1.close();
-        b2.close();
         done()
     });
 
@@ -45,8 +47,6 @@ test('requests get sent and responses returned', done => {
 
     b4.request("node3", "m1", 1).subscribe(response => {
         expect(response).toEqual(2);
-        b3.close();
-        b4.close();
         done();
     });
 
@@ -75,8 +75,6 @@ test('only ever receive a single response', done => {
     setTimeout(() => {
         expect(sent).toEqual([2]);
         expect(sent).toEqual(received);
-        b5.close();
-        b6.close();
         done();
     }, 100)
 });
@@ -105,8 +103,6 @@ test('producers stop when subscriptions are unsubscribed', done => {
         expect(sent).toEqual(received);
         expect(sent.length).toBeLessThan(6);
         expect(received.length).toBeLessThan(6);
-        b7.close();
-        b8.close();
         done();
     }, 500)
 
@@ -121,8 +117,6 @@ test('pushes buffer until the peer handler is available', done => {
 
     node10.handlePushes("m1", msg => {
         expect(msg).toEqual("TEST");
-        node9.close();
-        node10.close();
         done();
     });
 });
@@ -133,8 +127,6 @@ test('requests buffer until the peer handler is available', done => {
 
     node11.request("node12", "m1", 1).subscribe(result => {
         expect(result).toEqual(2);
-        node11.close();
-        bind('node12').close();
         done();
     });
 
@@ -152,8 +144,6 @@ test('subscriptions buffer until the peer handler is available', done => {
 
     node13.subscription("node14", "m1", 1).subscribe(result => {
         expect(result).toEqual(2);
-        node13.close();
-        bind('node14').close();
         done();
     });
 
@@ -177,8 +167,6 @@ test('error propagation of requests', done => {
     node2.request(node1.address(), "x").subscribe(next => {
 
     }, error => {
-        node1.close();
-        node2.close();
         expect(error).toEqual("rawr");
         done();
     }, () => {
@@ -204,8 +192,6 @@ test('completion propagation of requests', done => {
 
     }, () => {
         expect(values[0]).toEqual(1);
-        node1.close();
-        node2.close();
         done();
     })
 
@@ -224,8 +210,6 @@ test('error propagation of subscriptions', done => {
 
     }, error => {
         expect(error).toEqual("rawr");
-        node1.close();
-        node2.close();
         done();
     }, () => {
 
@@ -250,8 +234,6 @@ test('completion propagation of subscriptions', done => {
 
     }, () => {
         expect(values).toEqual([1, 2, 3]);
-        node1.close();
-        node2.close();
         done();
     })
 
@@ -259,7 +241,7 @@ test('completion propagation of subscriptions', done => {
 
 test('larger networks', done => {
 
-    const realSize = 6;
+    const realSize = 10;
 
     const observables = [];
 
