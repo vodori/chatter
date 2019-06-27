@@ -465,12 +465,14 @@ class ChatterSocket {
         this.sendToActiveChromeTab(message);
     }
     isTrustedOrigin(origin) {
-        const alreadyTrusted = this.settings.trustedOrigins.has(origin) || this.settings.trustedOrigins.has("*");
-        const isTrustedNow = alreadyTrusted || this.settings.isTrustedOrigin(origin);
-        if (isTrustedNow) {
-            this.settings.trustedOrigins.add(origin);
+        if (this.settings.trustedOrigins.has("*")) {
+            return true;
         }
-        return isTrustedNow;
+        if (this.settings.trustedOrigins.has(origin) || this.settings.isTrustedOrigin(origin)) {
+            this.settings.trustedOrigins.add(origin);
+            return true;
+        }
+        return false;
     }
     registerPeer(packet, edgeId, respond) {
         const peer = packet.header.source;
@@ -627,7 +629,11 @@ class ChatterSocket {
     sendToParentFrame(message) {
         if (models_1._window && models_1._window.parent && models_1._window.parent !== models_1._window && this.settings.allowParentIframe) {
             this.settings.trustedOrigins.forEach(origin => {
-                models_1._window.parent.postMessage(message, origin);
+                try {
+                    models_1._window.parent.postMessage(message, origin);
+                }
+                catch (e) {
+                }
             });
         }
     }
@@ -644,7 +650,11 @@ class ChatterSocket {
             const send = () => {
                 getIframes().forEach(frame => {
                     this.settings.trustedOrigins.forEach(origin => {
-                        frame.contentWindow.postMessage(message, origin);
+                        try {
+                            frame.contentWindow.postMessage(message, origin);
+                        }
+                        catch (e) {
+                        }
                     });
                 });
             };
