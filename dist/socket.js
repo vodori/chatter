@@ -453,6 +453,12 @@ class ChatterSocket {
             }
         }
         else {
+            if (this.settings.debug) {
+                this.logMessage(() => {
+                    console.log("Outbound message buffered because next hop could not be determined yet.");
+                    console.log(utils_1.prettyPrint(message.body));
+                });
+            }
             this.sourceBuffer[message.header.target] = this.sourceBuffer[message.header.target] || [];
             this.sourceBuffer[message.header.target].push(message);
         }
@@ -465,12 +471,14 @@ class ChatterSocket {
         this.sendToActiveChromeTab(message);
     }
     isTrustedOrigin(origin) {
-        const alreadyTrusted = this.settings.trustedOrigins.has(origin) || this.settings.trustedOrigins.has("*");
-        const isTrustedNow = alreadyTrusted || this.settings.isTrustedOrigin(origin);
-        if (isTrustedNow) {
-            this.settings.trustedOrigins.add(origin);
+        if (this.settings.trustedOrigins.has("*")) {
+            return true;
         }
-        return isTrustedNow;
+        if (this.settings.trustedOrigins.has(origin) || this.settings.isTrustedOrigin(origin)) {
+            this.settings.trustedOrigins.add(origin);
+            return true;
+        }
+        return false;
     }
     registerPeer(packet, edgeId, respond) {
         const peer = packet.header.source;
@@ -532,12 +540,13 @@ class ChatterSocket {
         });
     }
     listenToChildFrameMessages() {
-        if (this.settings.allowChildIframes) {
+        if (!this.settings.allowChildIframes) {
             return rxjs_1.EMPTY;
         }
         return new rxjs_1.Observable(observer => {
             const listener = (event) => {
                 const isChild = event.source !== window.parent && event.source !== window;
+                console.log(event.source, event.source === window, event.source === window.parent);
                 if (this.isTrustedOrigin(event.origin) && isChild) {
                     const message = event.data;
                     if (utils_1.looksLikeValidPacket(message)) {
@@ -627,7 +636,11 @@ class ChatterSocket {
     sendToParentFrame(message) {
         if (models_1._window && models_1._window.parent && models_1._window.parent !== models_1._window && this.settings.allowParentIframe) {
             this.settings.trustedOrigins.forEach(origin => {
-                models_1._window.parent.postMessage(message, origin);
+                try {
+                    models_1._window.parent.postMessage(message, origin);
+                }
+                catch (e) {
+                }
             });
         }
     }
@@ -644,7 +657,11 @@ class ChatterSocket {
             const send = () => {
                 getIframes().forEach(frame => {
                     this.settings.trustedOrigins.forEach(origin => {
-                        frame.contentWindow.postMessage(message, origin);
+                        try {
+                            frame.contentWindow.postMessage(message, origin);
+                        }
+                        catch (e) {
+                        }
                     });
                 });
             };
