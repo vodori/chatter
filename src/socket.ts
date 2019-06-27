@@ -468,8 +468,8 @@ export class ChatterSocket implements Socket {
             for (let k in this.sourceBuffer) {
                 if (changedNetwork.hasOwnProperty(k)) {
                     const messages = clone(this.sourceBuffer[k]);
+                    this.sourceBuffer[k] = [];
                     messages.forEach(msg => this.send(msg));
-                    delete this.sourceBuffer[k];
                 }
             }
 
