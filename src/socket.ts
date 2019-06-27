@@ -551,16 +551,18 @@ export class ChatterSocket implements Socket {
                 body: message
             };
 
-            for (let k in this.peers[message.header.target]) {
-                const edge = this.peers[message.header.target][k];
-                edge(netPacket);
+            for (let k in this.peers[nextHop]) {
+                if (this.peers[nextHop].hasOwnProperty(k)) {
+                    const edge = this.peers[nextHop][k];
+                    edge(netPacket);
+                }
             }
 
         } else {
             if(this.settings.debug) {
                 this.logMessage(() => {
                     console.log("Outbound message buffered because next hop could not be determined yet.");
-                    console.log(prettyPrint(message.body));
+                    console.log(prettyPrint(message));
                 });
             }
             this.sourceBuffer[message.header.target] = this.sourceBuffer[message.header.target] || [];
