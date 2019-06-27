@@ -9,7 +9,8 @@
   ],
   "scripts": {
     "build": "tsc",
-    "test": "jest"
+    "test": "jest",
+    "release": "npm run build && npm version patch && npm publish && git push && git push --tags"
   },
   "repository": {
     "type": "git",
