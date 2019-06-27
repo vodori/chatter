@@ -453,6 +453,12 @@ class ChatterSocket {
             }
         }
         else {
+            if (this.settings.debug) {
+                this.logMessage(() => {
+                    console.log("Outbound message buffered because next hop could not be determined yet.");
+                    console.log(utils_1.prettyPrint(message.body));
+                });
+            }
             this.sourceBuffer[message.header.target] = this.sourceBuffer[message.header.target] || [];
             this.sourceBuffer[message.header.target].push(message);
         }
@@ -534,12 +540,13 @@ class ChatterSocket {
         });
     }
     listenToChildFrameMessages() {
-        if (this.settings.allowChildIframes) {
+        if (!this.settings.allowChildIframes) {
             return rxjs_1.EMPTY;
         }
         return new rxjs_1.Observable(observer => {
             const listener = (event) => {
                 const isChild = event.source !== window.parent && event.source !== window;
+                console.log(event.source, event.source === window, event.source === window.parent);
                 if (this.isTrustedOrigin(event.origin) && isChild) {
                     const message = event.data;
                     if (utils_1.looksLikeValidPacket(message)) {
