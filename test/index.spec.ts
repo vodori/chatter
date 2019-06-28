@@ -4,14 +4,18 @@ import {tap} from "rxjs/operators";
 import {fromArray} from "rxjs/internal/observable/fromArray";
 import {deepEquals, uuid} from "../src/utils";
 
+function bindTest(address: string) {
+    return bind(address, {isTrustedSocket: x => true});
+}
+
 afterEach(() => {
     closeAllSockets();
 });
 
 test('automatic discovery', done => {
 
-    const x1 = bind("node1");
-    const x2 = bind("node2");
+    const x1 = bindTest("node1");
+    const x2 = bindTest("node2");
 
     const expected = {"node1": ["node2"], "node2": ["node1"]};
 
@@ -25,8 +29,8 @@ test('automatic discovery', done => {
 
 
 test('pushes get sent and handled', done => {
-    const b1 = bind("node1");
-    const b2 = bind("node2");
+    const b1 = bindTest("node1");
+    const b2 = bindTest("node2");
 
     b1.handlePushes("m1", msg => {
         expect(msg).toEqual("hello");
@@ -38,8 +42,8 @@ test('pushes get sent and handled', done => {
 
 test('requests get sent and responses returned', done => {
 
-    const b3 = bind("node3");
-    const b4 = bind("node4");
+    const b3 = bindTest("node3");
+    const b4 = bindTest("node4");
 
     b3.handleRequests("m1", msg => {
         return of(msg + 1);
@@ -54,8 +58,8 @@ test('requests get sent and responses returned', done => {
 
 test('only ever receive a single response', done => {
 
-    const b5 = bind("node5");
-    const b6 = bind("node6");
+    const b5 = bindTest("node5");
+    const b6 = bindTest("node6");
 
     const sent = [];
     const received = [];
@@ -81,8 +85,8 @@ test('only ever receive a single response', done => {
 
 test('producers stop when subscriptions are unsubscribed', done => {
 
-    const b7 = bind("node7");
-    const b8 = bind("node8");
+    const b7 = bindTest("node7");
+    const b8 = bindTest("node8");
 
     const sent = [];
     const received = [];
@@ -110,10 +114,10 @@ test('producers stop when subscriptions are unsubscribed', done => {
 
 
 test('pushes buffer until the peer handler is available', done => {
-    const node9 = bind('node9');
+    const node9 = bindTest('node9');
     node9.push("node10", "m1", "TEST");
 
-    const node10 = bind("node10");
+    const node10 = bindTest("node10");
 
     node10.handlePushes("m1", msg => {
         expect(msg).toEqual("TEST");
@@ -123,14 +127,14 @@ test('pushes buffer until the peer handler is available', done => {
 
 
 test('requests buffer until the peer handler is available', done => {
-    const node11 = bind('node11');
+    const node11 = bindTest('node11');
 
     node11.request("node12", "m1", 1).subscribe(result => {
         expect(result).toEqual(2);
         done();
     });
 
-    const node12 = bind("node12");
+    const node12 = bindTest("node12");
 
     node12.handleRequests("m1", msg => {
         return of(msg + 1);
@@ -140,14 +144,14 @@ test('requests buffer until the peer handler is available', done => {
 
 
 test('subscriptions buffer until the peer handler is available', done => {
-    const node13 = bind('node13');
+    const node13 = bindTest('node13');
 
     node13.subscription("node14", "m1", 1).subscribe(result => {
         expect(result).toEqual(2);
         done();
     });
 
-    const node14 = bind("node14");
+    const node14 = bindTest("node14");
 
     node14.handleSubscriptions("m1", msg => {
         return of(msg + 1);
@@ -157,8 +161,8 @@ test('subscriptions buffer until the peer handler is available', done => {
 
 test('error propagation of requests', done => {
 
-    const node1 = bind(uuid());
-    const node2 = bind(uuid());
+    const node1 = bindTest(uuid());
+    const node2 = bindTest(uuid());
 
     node1.handleRequests("x", msg => {
         return throwError("rawr");
@@ -177,8 +181,8 @@ test('error propagation of requests', done => {
 
 test('completion propagation of requests', done => {
 
-    const node1 = bind(uuid());
-    const node2 = bind(uuid());
+    const node1 = bindTest(uuid());
+    const node2 = bindTest(uuid());
 
     node1.handleRequests("x", msg => {
         return of(1);
@@ -199,8 +203,8 @@ test('completion propagation of requests', done => {
 
 test('error propagation of subscriptions', done => {
 
-    const node1 = bind(uuid());
-    const node2 = bind(uuid());
+    const node1 = bindTest(uuid());
+    const node2 = bindTest(uuid());
 
     node1.handleSubscriptions("x", msg => {
         return throwError("rawr");
@@ -219,8 +223,8 @@ test('error propagation of subscriptions', done => {
 
 test('completion propagation of subscriptions', done => {
 
-    const node1 = bind(uuid());
-    const node2 = bind(uuid());
+    const node1 = bindTest(uuid());
+    const node2 = bindTest(uuid());
 
     node1.handleSubscriptions("x", msg => {
         return fromArray([1, 2, 3]);
@@ -246,7 +250,7 @@ test('larger networks', done => {
     const observables = [];
 
     for (let i = 0; i < realSize; i++) {
-        const socket = bind(i + "_HUGE");
+        const socket = bindTest(i + "_HUGE");
         observables.push(socket.discover());
     }
 

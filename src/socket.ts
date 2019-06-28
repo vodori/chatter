@@ -1,6 +1,6 @@
 import {_chrome, _document, _localMessageBus, _window, AppPacket, AppProto, defaultSettings, NetPacket, NetProto, Network, Settings, Socket} from "./models";
 import {BehaviorSubject, EMPTY, merge, Observable, Observer, Subscription} from "rxjs";
-import {clone, deepEquals, looksLikeValidPacket, prettyPrint, uuid} from "./utils";
+import {clone, deepEquals, isObject, prettyPrint, uuid} from "./utils";
 import {debounceTime, distinctUntilChanged, filter, first, map} from "rxjs/operators";
 import {mergeNetworks, normalizeNetwork, shortestPath} from "./topo";
 
@@ -621,7 +621,7 @@ export class ChatterSocket implements Socket {
         return new Observable(observer => {
 
             const sub = _localMessageBus.subscribe(packet => {
-                if (looksLikeValidPacket(packet)) {
+                if (this.looksLikeValidPacket(packet)) {
                     this.registerPeer(packet, "local::bus", this.sendToLocalBus.bind(this));
                     observer.next(packet);
                 }
@@ -643,7 +643,7 @@ export class ChatterSocket implements Socket {
                 const isMyParent = event.source === window.parent && window.parent !== window;
                 if (this.isTrustedOrigin(event.origin) && isMyParent) {
                     const message = event.data;
-                    if (looksLikeValidPacket(message)) {
+                    if (this.looksLikeValidPacket(message)) {
                         this.registerPeer(message, `window::${event.origin}`, msg => {
                             (<any>event.source).postMessage(msg, event.origin);
                         });
@@ -673,7 +673,7 @@ export class ChatterSocket implements Socket {
                 console.log(event.source, event.source === window, event.source === window.parent);
                 if (this.isTrustedOrigin(event.origin) && isChild) {
                     const message = event.data;
-                    if (looksLikeValidPacket(message)) {
+                    if (this.looksLikeValidPacket(message)) {
                         this.registerPeer(message, `window::${event.origin}`, msg => {
                             (<any>event.source).postMessage(msg, event.origin);
                         });
@@ -705,18 +705,6 @@ export class ChatterSocket implements Socket {
                 filter(msg => !this.isIgnoredTransaction(msg.body.header.transaction)));
     }
 
-    isIframeContext() {
-        return !!_window && !!_window.parent && _window.parent !== _window;
-    }
-
-    isChromeContentScriptContext() {
-        return !!_chrome && !!_chrome.runtime && !_chrome.tabs;
-    }
-
-    isChromeBackgroundScriptContext() {
-        return !!_chrome && !!_chrome.runtime && !!_chrome.tabs;
-    }
-
     listenToMessagesFromChromeRuntime(): Observable<NetPacket> {
         if (!this.settings.allowChromeRuntime) {
             return EMPTY;
@@ -725,7 +713,7 @@ export class ChatterSocket implements Socket {
             const listener: any = (message: any, sender: any) => {
                 const origin = `chrome-extension://${sender.id}`;
                 if (!sender.tab && this.isTrustedOrigin(origin)) {
-                    if (looksLikeValidPacket(message)) {
+                    if (this.looksLikeValidPacket(message)) {
                         this.registerPeer(message, `chromeRuntime::${origin}`, msg => {
                             this.sendToChromeRuntime(msg);
                         });
@@ -755,7 +743,7 @@ export class ChatterSocket implements Socket {
                 const origin = `chrome-extension://${sender.id}`;
                 const cameFromActiveContentScript = (sender.tab && sender.tab.active);
                 if (cameFromActiveContentScript && this.isTrustedOrigin(origin)) {
-                    if (looksLikeValidPacket(message)) {
+                    if (this.looksLikeValidPacket(message)) {
                         this.registerPeer(message, `chromeTab::${origin}`, msg => {
                             this.sendToActiveChromeTab(msg);
                         });
@@ -854,6 +842,23 @@ export class ChatterSocket implements Socket {
         return this.subscriptionPacket(address, key, message).pipe(map(msg => msg.body));
     }
 
+    isTrustedSocket(address: string) {
+        if (this.settings.trustedSockets.has("*")) {
+            return true;
+        }
+        if (this.settings.trustedSockets.has(address) || this.settings.isTrustedSocket(address)) {
+            this.settings.trustedSockets.add(address);
+            return true;
+        }
+        return false;
+    }
+
+    looksLikeValidPacket(msg: any) {
+        return isObject(msg) &&
+            msg.hasOwnProperty("header") &&
+            msg.hasOwnProperty("body") &&
+            this.isTrustedSocket(msg.body.header.source);
+    }
 
 }
 

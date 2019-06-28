@@ -64,6 +64,8 @@ export interface Settings {
     allowChildIframes?: boolean,
     allowLocalBus?: boolean,
     trustedOrigins?: Set<string>,
+    trustedSockets?: Set<string>,
+    isTrustedSocket?: (origin: string) => boolean,
     isTrustedOrigin?: (origin: string) => boolean
 }
 
@@ -76,6 +78,8 @@ export function defaultSettings(): Settings {
         allowParentIframe: true,
         allowLocalBus: true,
         trustedOrigins: new Set(),
+        trustedSockets: new Set(),
+        isTrustedSocket: socket => false,
         isTrustedOrigin: origin => false
     }
 }

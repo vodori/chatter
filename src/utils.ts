@@ -69,9 +69,3 @@ export function uuid() {
 export function clone<T>(data: T): T {
     return JSON.parse(JSON.stringify(data));
 }
-
-export function looksLikeValidPacket(msg: any) {
-    return isObject(msg) &&
-        msg.hasOwnProperty("header") &&
-        msg.hasOwnProperty("body");
-}
