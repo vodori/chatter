@@ -857,7 +857,7 @@ export class ChatterSocket implements Socket {
         return isObject(msg) &&
             msg.hasOwnProperty("header") &&
             msg.hasOwnProperty("body") &&
-            this.isTrustedSocket(msg.body.header.source);
+            this.isTrustedSocket(msg.header.source);
     }
 
 }
