@@ -24,7 +24,6 @@ export class ChatterSocket implements Socket {
     subscriptionHandlers: { [s: string]: (msg: AppPacket) => Observable<any> };
     peers: { [s: string]: { [s: string]: (msg: NetPacket) => void } };
     openConsumers: { [s: string]: Observer<AppPacket> };
-    ignoredTransactionMessages: Set<string>;
     cleanups: (() => void)[];
 
     constructor(private _address: string, private settings: Settings) {
@@ -46,7 +45,6 @@ export class ChatterSocket implements Socket {
         this.openConsumers = {};
         this.openProducers = {};
         this.peers = {};
-        this.ignoredTransactionMessages = new Set<string>();
         this.cleanups = [];
     }
 
@@ -227,7 +225,7 @@ export class ChatterSocket implements Socket {
 
             if (this.settings.debug) {
                 this.logMessage(() => {
-                    console.log(`Handling ${message.body.header.protocol} message of type ${message.body.header.key}`);
+                    console.log(`Handling ${message.body.header.protocol} message from ${message.body.header.source} of type ${message.body.header.key}`);
                     console.log(prettyPrint(message.body.body));
                 });
             }
@@ -242,12 +240,12 @@ export class ChatterSocket implements Socket {
 
 
     logMessage(callback) {
-        const addressLength = this.address().length;
+        const header = `=====${this.address()}=====`;
         let footer = "";
-        for (let i = 0; i < addressLength + 10; i++) {
+        for (let i = 0; i < header.length; i++) {
             footer += "=";
         }
-        console.log(`=====${this.address()}=====`);
+        console.log(header);
         callback();
         console.log(footer);
         console.log("");
@@ -260,7 +258,7 @@ export class ChatterSocket implements Socket {
 
             if (this.settings.debug) {
                 this.logMessage(() => {
-                    console.log(`Handling ${message.body.header.protocol} message of type ${message.body.header.key}`);
+                    console.log(`Handling ${message.body.header.protocol} message from ${message.body.header.source} of type ${message.body.header.key}`);
                     console.log(prettyPrint(message.body.body));
                 });
             }
@@ -367,15 +365,6 @@ export class ChatterSocket implements Socket {
         return false;
     }
 
-    broadcastInboundMessage(message: NetPacket) {
-        const newHeader = Object.assign({}, message.header, {
-            id: uuid(),
-            source: this._address
-        });
-        const newPacket = Object.assign({}, message, {header: newHeader});
-        this.broadcast(newPacket);
-    }
-
     processPushBuffer(key: string) {
         const messages = this.destinationPushBuffer[key] || [];
         messages.forEach(msg => this.receiveIncomingMessage(msg));
@@ -411,15 +400,6 @@ export class ChatterSocket implements Socket {
         this.send(message.body);
     }
 
-    ignoreTransaction(transactionId) {
-        this.ignoredTransactionMessages.add(transactionId);
-        setTimeout(() => this.ignoredTransactionMessages.delete(transactionId), 5000)
-    }
-
-    isIgnoredTransaction(transactionId) {
-        return this.ignoredTransactionMessages.has(transactionId);
-    }
-
     receiveIncomingMessage(message: NetPacket) {
 
         if (message.body.header.target === this._address || message.header.protocol === NetProto.BROADCAST) {
@@ -430,11 +410,6 @@ export class ChatterSocket implements Socket {
                     }
                 }
             }
-        }
-
-        if (message.body.header.target !== this._address && message.header.protocol === NetProto.BROADCAST) {
-            this.ignoreTransaction(message.body.header.transaction);
-            this.broadcastInboundMessage(message);
         }
 
         if (message.body.header.target !== this._address && message.header.protocol === NetProto.POINT_TO_POINT) {
@@ -473,12 +448,23 @@ export class ChatterSocket implements Socket {
                 }
             }
 
-            this.broadcastPush(CHATTER_DISCOVERY, {network: changedNetwork});
+            this.getPeers().forEach(peer => {
+                this.push(peer, CHATTER_DISCOVERY, {network: changedNetwork});
+            });
         }));
 
         if (this.settings.debug) {
             this.startDebugMode();
         }
+    }
+
+    getPeers(): Set<string> {
+        const peers = new Set<string>();
+        Object.keys(this.peers).forEach(peer => {
+            peers.add(peer);
+        });
+        peers.delete(this._address);
+        return peers;
     }
 
     monkeyPatchObservableSubscribe(transaction, observable: Observable<any>): Observable<any> {
@@ -533,6 +519,12 @@ export class ChatterSocket implements Socket {
 
 
     send(message: AppPacket): void {
+        if (message.header.source === message.header.target) {
+            this.logMessage(() => {
+                console.error("You tried to send a packet to yourself.");
+            });
+            return;
+        }
 
         const net = this.network.getValue();
         const path = shortestPath(net, this._address, message.header.target);
@@ -559,7 +551,7 @@ export class ChatterSocket implements Socket {
             }
 
         } else {
-            if(this.settings.debug) {
+            if (this.settings.debug) {
                 this.logMessage(() => {
                     console.log("Outbound message buffered because next hop could not be determined yet.");
                     console.log(prettyPrint(message));
@@ -594,22 +586,45 @@ export class ChatterSocket implements Socket {
     registerPeer(packet: NetPacket, edgeId: string, respond: (msg: any) => void): void {
         const peer = packet.header.source;
         this.peers = this.peers || {};
-        this.peers[peer] = this.peers[peer] || {};
-        this.peers[peer][edgeId] = this.peers[peer][edgeId] || respond;
 
-        const network = clone(this.network.getValue());
+        if (!this.peers.hasOwnProperty(peer)) {
 
-        if (peer !== this._address) {
-            if (network[this._address].indexOf(peer) === -1) {
-                network[this._address].push(peer);
+            if (this.settings.debug) {
+                this.logMessage(() => {
+                    console.log(`Learned of a new peer ${peer}.`);
+                });
             }
+
+            this.peers[peer] = this.peers[peer] || {};
         }
 
-        if (!network.hasOwnProperty(peer)) {
-            network[peer] = [this._address];
-        }
+        if (!this.peers[peer].hasOwnProperty(edgeId)) {
 
-        this.network.next(network);
+            if (this.settings.debug) {
+                this.logMessage(() => {
+                    console.log(`Learned of a new edge ${edgeId} for peer ${peer}`);
+                });
+            }
+
+            this.peers[peer][edgeId] = respond;
+
+            const network = clone(this.network.getValue());
+
+            if (peer !== this._address) {
+                if (network[this._address].indexOf(peer) === -1) {
+                    network[this._address].push(peer);
+                }
+            }
+
+            if (!network.hasOwnProperty(peer)) {
+                network[peer] = [this._address];
+            }
+
+            if (!deepEquals(network, this.network.getValue())) {
+                this.network.next(network);
+            }
+
+        }
     }
 
 
@@ -670,7 +685,6 @@ export class ChatterSocket implements Socket {
         return new Observable<NetPacket>(observer => {
             const listener = (event: MessageEvent) => {
                 const isChild = event.source !== window.parent && event.source !== window;
-                console.log(event.source, event.source === window, event.source === window.parent);
                 if (this.isTrustedOrigin(event.origin) && isChild) {
                     const message = event.data;
                     if (this.looksLikeValidPacket(message)) {
@@ -701,8 +715,8 @@ export class ChatterSocket implements Socket {
             this.listenToLocalMessages())
             .pipe(filter(msg => msg.header.source !== this._address),
                 filter(msg => msg.body.header.source !== this._address),
-                filter(msg => msg.header.target === this._address || msg.header.protocol === NetProto.BROADCAST),
-                filter(msg => !this.isIgnoredTransaction(msg.body.header.transaction)));
+                filter(msg => this.isTrustedSocket(msg.header.source)),
+                filter(msg => msg.header.target === this._address || msg.header.protocol === NetProto.BROADCAST));
     }
 
     listenToMessagesFromChromeRuntime(): Observable<NetPacket> {
@@ -713,6 +727,7 @@ export class ChatterSocket implements Socket {
             const listener: any = (message: any, sender: any) => {
                 const origin = `chrome-extension://${sender.id}`;
                 if (!sender.tab && this.isTrustedOrigin(origin)) {
+
                     if (this.looksLikeValidPacket(message)) {
                         this.registerPeer(message, `chromeRuntime::${origin}`, msg => {
                             this.sendToChromeRuntime(msg);
@@ -740,12 +755,12 @@ export class ChatterSocket implements Socket {
         }
         return new Observable<NetPacket>(observer => {
             const listener: any = (message: any, sender: any) => {
-                const origin = `chrome-extension://${sender.id}`;
                 const cameFromActiveContentScript = (sender.tab && sender.tab.active);
-                if (cameFromActiveContentScript && this.isTrustedOrigin(origin)) {
-                    if (this.looksLikeValidPacket(message)) {
-                        this.registerPeer(message, `chromeTab::${origin}`, msg => {
-                            this.sendToActiveChromeTab(msg);
+                if (cameFromActiveContentScript) {
+                    const origin = `chrome-extension://${sender.id}`;
+                    if (this.isTrustedOrigin(origin) && this.looksLikeValidPacket(message)) {
+                        this.registerPeer(message, `chromeTab::${sender.tab.id}`, msg => {
+                            _chrome.tabs.sendMessage(sender.tab.id, msg);
                         });
                         observer.next(message);
                     }
@@ -785,18 +800,26 @@ export class ChatterSocket implements Socket {
     sendToChildIframes(message: any): void {
         if (this.settings.allowChildIframes) {
             const getIframes = (): HTMLIFrameElement[] => {
-                return Array.from(_document.getElementsByTagName('iframe'));
+                return Array.from(_document.getElementsByTagName('iframe')).filter(frame => {
+                    return !!frame.src
+                });
             };
 
             const send = () => {
                 getIframes().forEach(frame => {
-                    this.settings.trustedOrigins.forEach(origin => {
-                        try {
-                            frame.contentWindow.postMessage(message, origin);
-                        } catch (e) {
-
+                    try {
+                        const url = new URL(frame.src);
+                        if (this.settings.trustedOrigins.has("*")) {
+                            frame.contentWindow.postMessage(message, "*");
+                        } else if (this.settings.trustedOrigins.has(url.origin)) {
+                            frame.contentWindow.postMessage(message, url.origin);
+                        } else if (this.settings.isTrustedOrigin(url.origin)) {
+                            this.settings.trustedOrigins.add(url.origin);
+                            frame.contentWindow.postMessage(message, url.origin);
                         }
-                    });
+                    } catch (e) {
+
+                    }
                 });
             };
 
