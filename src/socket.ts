@@ -421,10 +421,18 @@ export class ChatterSocket implements Socket {
 
         this.allSubscriptions = new Subscription();
 
-        this.handlePushes(CHATTER_DISCOVERY, msg => {
+        this.handlePushesPacket(CHATTER_DISCOVERY, msg => {
             const current = clone(this.network.getValue());
-            const merged = mergeNetworks(current, msg.network);
-            this.network.next(merged);
+            const merged = mergeNetworks(current, msg.body.network);
+            if(!deepEquals(current, merged)) {
+                if(this.settings.debug) {
+                    this.logMessage(() => {
+                        console.log(`Grew the network via message from ${msg.header.source}`);
+                        console.log(prettyPrint(msg.body));
+                    });
+                }
+                this.network.next(merged);
+            }
         });
 
         this.handlePushes(CHATTER_UNSUBSCRIBE, (msg: any) => {
@@ -754,15 +762,25 @@ export class ChatterSocket implements Socket {
             return EMPTY;
         }
         return new Observable<NetPacket>(observer => {
+
+            let firstTabToTalkToMe = -1;
+
             const listener: any = (message: any, sender: any) => {
                 const cameFromActiveContentScript = (sender.tab && sender.tab.active);
                 if (cameFromActiveContentScript) {
                     const origin = `chrome-extension://${sender.id}`;
                     if (this.isTrustedOrigin(origin) && this.looksLikeValidPacket(message)) {
-                        this.registerPeer(message, `chromeTab::${sender.tab.id}`, msg => {
-                            _chrome.tabs.sendMessage(sender.tab.id, msg);
-                        });
-                        observer.next(message);
+
+                        if(firstTabToTalkToMe === -1) {
+                            firstTabToTalkToMe = sender.tab.id;
+                        }
+
+                        if(sender.tab.id === firstTabToTalkToMe) {
+                            this.registerPeer(message, `chromeTab::${sender.tab.id}`, msg => {
+                                _chrome.tabs.sendMessage(sender.tab.id, msg);
+                            });
+                            observer.next(message);
+                        }
                     }
                 }
             };
