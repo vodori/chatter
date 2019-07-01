@@ -853,16 +853,16 @@ export class ChatterSocket implements Socket {
 
     sendToChromeRuntime(message: any): void {
         if (this.supportsRuntime() && this.settings.allowChromeRuntime) {
-            _chrome.runtime.sendMessage(message);
+            _chrome.runtime.sendMessage(_chrome.runtime.id, message);
         }
     }
 
     supportsRuntime(): boolean {
-        return _chrome && _chrome.runtime && !!_chrome.runtime.sendMessage;
+        return !!_chrome && !!_chrome.runtime && !!_chrome.runtime.id && !!_chrome.runtime.sendMessage
     }
 
     supportsTabs(): boolean {
-        return _chrome && _chrome.tabs && !!_chrome.tabs.query;
+        return !!_chrome && !!_chrome.tabs && !!_chrome.tabs.query;
     }
 
     sendToActiveChromeTab(message: any): void {
