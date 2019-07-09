@@ -424,15 +424,18 @@ export class ChatterSocket implements Socket {
         this.handlePushesPacket(CHATTER_DISCOVERY, msg => {
             const current = clone(this.network.getValue());
             const merged = mergeNetworks(current, msg.body.network);
-            if(!deepEquals(current, merged)) {
-                if(this.settings.debug) {
+            if (!deepEquals(current, merged)) {
+                if (this.settings.debug) {
                     this.logMessage(() => {
                         console.log(`Grew the network via message from ${msg.header.source}`);
                         console.log(prettyPrint(msg.body));
                     });
                 }
                 this.network.next(merged);
+            } else if (!msg.body.bounceOnce) {
+                this.push(msg.header.source, CHATTER_DISCOVERY, {network: current, bounceOnce: true});
             }
+
         });
 
         this.handlePushes(CHATTER_UNSUBSCRIBE, (msg: any) => {
