@@ -35,9 +35,9 @@
   },
   "devDependencies": {
     "@types/chrome": "0.0.117",
-    "@types/jest": "^26.0.3",
-    "jest": "^26.1.0",
-    "ts-jest": "^26.1.1",
-    "typescript": "^3.9.5"
+    "@types/jest": "26.0.3",
+    "jest": "26.1.0",
+    "ts-jest": "26.1.1",
+    "typescript": "3.9.5"
   }
 }
