@@ -30,7 +30,7 @@
   },
   "homepage": "https://github.com/vodori/chatter#readme",
   "dependencies": {
-    "dijkstrajs": "1.0.1",
+    "dijkstrajs": "1.0.2",
     "rxjs": "6.6.3"
   },
   "devDependencies": {
