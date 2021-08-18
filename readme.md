@@ -3,9 +3,9 @@
 [![MIT Licence](https://badges.frapsoft.com/os/mit/mit.svg?v=103)](https://opensource.org/licenses/mit-license.php)
 
 
-A network socket implementation implementation for communicating across various browser contexts 
+A network socket implementation for communicating across various browser contexts 
 (nested iframes, extension background script, extension content script). Higher level abstractions 
-like push, request/reply, and long lived topic subscriptions are implemented on top of unidirectional 
+like push, request/reply, and long-lived topic subscriptions are implemented on top of unidirectional 
 messages that automatically propagate to all reachable contexts.
 
 ___
