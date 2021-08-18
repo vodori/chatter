@@ -1,6 +1,6 @@
 {
   "name": "@vodori/chatter",
-  "version": "0.0.26",
+  "version": "0.0.27",
   "description": "A gossip protocol implementation for communicating across various browser contexts",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -31,13 +31,13 @@
   "homepage": "https://github.com/vodori/chatter#readme",
   "dependencies": {
     "dijkstrajs": "1.0.2",
-    "rxjs": "6.6.3"
+    "rxjs": "7.3.0"
   },
   "devDependencies": {
-    "@types/chrome": "0.0.117",
-    "@types/jest": "26.0.3",
-    "jest": "26.1.0",
-    "ts-jest": "26.1.1",
-    "typescript": "4.1.5"
+    "@types/chrome": "0.0.154",
+    "@types/jest": "27.0.1",
+    "jest": "27.0.6",
+    "ts-jest": "27.0.5",
+    "typescript": "4.3.5"
   }
 }

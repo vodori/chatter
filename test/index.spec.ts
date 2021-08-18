@@ -1,7 +1,6 @@
 import {bind, closeAllSockets} from "../src";
-import {combineLatest, interval, of, throwError} from "rxjs";
+import {combineLatest, from, interval, of, throwError} from "rxjs";
 import {tap} from "rxjs/operators";
-import {fromArray} from "rxjs/internal/observable/fromArray";
 import {deepEquals, uuid} from "../src/utils";
 
 function bindTest(address: string) {
@@ -65,7 +64,7 @@ test('only ever receive a single response', done => {
     const received = [];
 
     b5.handleRequests("m1", msg => {
-        return fromArray([msg + 1, msg + 2, msg + 3]).pipe(tap(m => sent.push(m)));
+        return from([msg + 1, msg + 2, msg + 3]).pipe(tap(m => sent.push(m)));
     });
 
     const sub = b6.request("node5", "m1", 1).subscribe(response => {
@@ -227,7 +226,7 @@ test('completion propagation of subscriptions', done => {
     const node2 = bindTest(uuid());
 
     node1.handleSubscriptions("x", msg => {
-        return fromArray([1, 2, 3]);
+        return from([1, 2, 3]);
     });
 
     const values = [];
