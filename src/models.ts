@@ -1,12 +1,14 @@
 import {Observable, Subject} from "rxjs";
 
-export const _global: any = () => {
+function getGlobal(): any {
     try {
         return window === undefined ? {} : window;
     } catch (error) {
         return {};
     }
 };
+
+export const _global = getGlobal();
 
 export const _chrome = _global.chrome;
 export const _window: Window = _global.window;
