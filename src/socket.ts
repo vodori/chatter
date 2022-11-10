@@ -1,7 +1,7 @@
 import {_chrome, _document, _localMessageBus, _window, AppPacket, AppProto, defaultSettings, NetPacket, NetProto, Network, Settings, Socket} from "./models";
-import {BehaviorSubject, EMPTY, merge, Observable, Observer, Subscription} from "rxjs";
+import {BehaviorSubject, EMPTY, merge, Observable, Observer, of, Subscription} from "rxjs";
 import {clone, deepEquals, isObject, prettyPrint, uuid} from "./utils";
-import {debounceTime, distinctUntilChanged, filter, first, map} from "rxjs/operators";
+import {debounceTime, distinctUntilChanged, filter, first, map, tap} from "rxjs/operators";
 import {mergeNetworks, normalizeNetwork, shortestPath} from "./topo";
 
 const CHATTER_UNSUBSCRIBE = "__chatterUnsubscribe";
@@ -173,6 +173,18 @@ export class ChatterSocket implements Socket {
                 body: message
             });
 
+            // temporary added for testing
+            observer.next({
+                header: {
+                    key: key,
+                    protocol: AppProto.REQUEST,
+                    source: this._address,
+                    target: address,
+                    transaction: transaction,
+                },
+                body: message
+            });
+            
             return () => {
                 delete this.openConsumers[transaction];
                 this.push(address, CHATTER_UNSUBSCRIBE, {transaction: transaction});
