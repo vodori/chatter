@@ -10,7 +10,7 @@ function getGlobal(): any {
 
 export const _global = getGlobal();
 
-export const _chrome = chrome || _global.chrome;
+export const _chrome = _global.chrome;
 export const _window: Window = _global.window;
 export const _document: Document = _global.document;
 export const _localMessageBus = new Subject<NetPacket>();
