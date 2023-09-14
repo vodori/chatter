@@ -1,5 +1,5 @@
 [![npm version](https://badge.fury.io/js/%40vodori%2Fchatter.svg)](https://badge.fury.io/js/%40vodori%2Fchatter)
-[![Build Status](https://travis-ci.org/vodori/chatter.svg?branch=develop)](https://travis-ci.org/vodori/chatter)
+![Build Status](https://github.com/vodori/chatter/actions/workflows/build.yml/badge.svg)
 [![MIT Licence](https://badges.frapsoft.com/os/mit/mit.svg?v=103)](https://opensource.org/licenses/mit-license.php)
 
 
